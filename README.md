@@ -6,17 +6,35 @@ Launcher scripts and key icons for a Ulanzi Stream Deck D200 on macOS.
 
 | Script | What it does |
 |---|---|
-| `scripts/chrome-chaiwut.command` | Opens a new Google Chrome window with the **Chaiwut** profile |
-| `scripts/chrome-ibmdt.command` | Opens a new Google Chrome window with the **IBMDT** profile |
+| `scripts/chrome-chaiwut.command` | Switches to the **Chaiwut** Chrome profile |
+| `scripts/chrome-ibmdt.command` | Switches to the **IBMDT** Chrome profile |
 
-Each script runs:
+Each script:
 
-```zsh
-open -na "Google Chrome" --args --profile-directory="<folder>"
-```
+1. If Chrome is not running — launches it with that profile:
+   ```zsh
+   open -na "Google Chrome" --args --profile-directory="<folder>"
+   ```
+   (`--profile-directory` takes Chrome's **internal folder name**, not the
+   display name.)
+2. If Chrome is running — uses AppleScript to click the profile's name in
+   Chrome's native **Profiles** menu bar menu. That focuses an existing window
+   of the profile if one is open, and only opens a new window if none exists.
+3. If the AppleScript path fails (no Accessibility permission) — falls back to
+   opening a new window with the profile.
 
-`-n` opens a new instance and `-a` targets the Chrome app; `--profile-directory`
-takes Chrome's **internal folder name**, not the display name.
+### One-time permissions
+
+The menu-click path needs two macOS permissions for **Terminal** (the app that
+runs `.command` files):
+
+- **Automation** — a prompt appears on first run ("Terminal wants to control
+  System Events / Google Chrome"); click OK.
+- **Accessibility** — grant manually: System Settings → Privacy & Security →
+  Accessibility → enable Terminal.
+
+Without Accessibility, the scripts still work but always open a new window
+instead of switching to an existing one.
 
 ## Profile folder mapping
 
