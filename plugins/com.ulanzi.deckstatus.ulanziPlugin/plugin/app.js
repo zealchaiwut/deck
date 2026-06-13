@@ -18,6 +18,7 @@ import {
   readSprintStatus, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
+import { render as renderStyle, renderMissing } from './render.js';
 import { appendFileSync, watch, existsSync } from 'fs';
 import { execFile } from 'child_process';
 import os from 'os';
@@ -25,7 +26,9 @@ import path from 'path';
 import { expandPath } from './state-reader.js';
 
 const PLUGIN_UUID = 'com.ulanzi.ulanzistudio.deckstatus';
+const ACTION_STATUSTILE = 'com.ulanzi.ulanzistudio.deckstatus.statustile';
 const ACTION_ANTIGRAVITY = 'com.ulanzi.ulanzistudio.deckstatus.antigravity';
+const PULSE_MS = 700; // running-state glyph pulse cadence
 const ACTION_CLAUDECODE = 'com.ulanzi.ulanzistudio.deckstatus.claudecode';
 const ACTION_CLAUDECYCLE = 'com.ulanzi.ulanzistudio.deckstatus.claudecycle';
 const ACTION_SPRINT = 'com.ulanzi.ulanzistudio.deckstatus.sprint';
@@ -91,21 +94,64 @@ function ageColor(sec) {
   return toHex(COLOR_STOPS[COLOR_STOPS.length - 1][1]); // > 30m -> grey
 }
 
-// --- Status Tile: decide icon from a file read --------------------------------
-function fileIcon(read) {
-  if (!read || read.missing) return renderNeutral({ value: '—' });
-  const value = String(read.value || '').trim();
-  if (value === '' || (read.isCounter && /^0+$/.test(value))) {
-    return renderNeutral({ value: read.isCounter ? '0' : '—', label: read.label });
-  }
-  return renderTile({ value, color: read.color, label: read.label });
+// --- Status Tile: rich style-based render (agent|gauge|ring|timestat|repo) ----
+// Merges PI settings (style/accent/glyph/label/is_counter) with live file data
+// (value/color/state/label/count). pulse alpha animates "running" glyphs.
+async function statusTileIcon(inst) {
+  const read = await readSource(inst.stateDir, inst.source);
+  inst.lastRead = read;
+  // running styles pulse; (de)arm the 700ms redraw timer accordingly.
+  const isRunning = !read.missing && read.state === 'running';
+  managePulse(inst, isRunning && (inst.style === 'agent' || inst.style === 'timestat'));
+
+  if (read.missing) return renderMissing(inst.label);
+
+  // count "1/2" -> done/total for the ring style.
+  const count = read.count || (inst.isCounter ? read.value : '');
+  let done, total;
+  const m = /^(\d+)\s*\/\s*(\d+)$/.exec(String(count));
+  if (m) { done = +m[1]; total = +m[2]; }
+
+  const pulse = (Math.sin((inst.pulsePhase || 0) * 0.9) + 1) / 2; // 0..1
+  const data = {
+    accent: read.accent || inst.accent || 'grey',
+    glyph: inst.glyph,
+    label: read.label || inst.label,
+    state: read.state,
+    count,
+    done, total,
+    value: read.value,
+    color: read.color, // gauge threshold override
+    pulse,
+  };
+  return renderStyle(inst.style || 'agent', data);
 }
 
-// --- Antigravity: decide icon from a git read ---------------------------------
+function managePulse(inst, on) {
+  if (on) {
+    if (!inst.pulseTimer) {
+      inst.pulseTimer = setInterval(() => {
+        inst.pulsePhase = (inst.pulsePhase || 0) + 1;
+        inst.lastIcon = '';
+        renderInstance(inst);
+      }, PULSE_MS);
+    }
+  } else if (inst.pulseTimer) {
+    clearInterval(inst.pulseTimer);
+    inst.pulseTimer = null;
+  }
+}
+
+// --- Antigravity: render via the styled "timestat" tile (prefilled, no config)
 function commitIcon(read) {
-  if (!read || read.missing) return renderNeutral({ value: '—', label: 'no repo' });
-  // Big timer (age) on top, commit hash as the small label below.
-  return renderTile({ value: read.ageText, color: ageColor(read.ageSec), label: read.hash });
+  if (!read || read.missing) return renderMissing('no repo');
+  // accent fades by age (ageColor hex); big age value middle, hash title on top.
+  return renderStyle('timestat', {
+    accent: ageColor(read.ageSec),
+    glyph: 'git-branch',
+    value: read.ageText,
+    label: read.hash,
+  });
 }
 
 // Resolve the project: PI setting -> config file -> built-in default.
@@ -126,6 +172,15 @@ function sessionLook(sess) {
   if (sess.state === 'waiting') return { color: 'amber', word: 'needs you' };
   if (sess.state === 'done') return { color: 'green', word: 'ready' }; // done = pending next task
   return { color: 'grey', word: 'idle' };
+}
+
+// Map a session -> agent-style fields: { accent, state(for glyph), word }.
+function agentFor(sess) {
+  if (!sess || sess.stale) return { accent: 'grey', state: 'idle', word: 'idle' };
+  if (sess.state === 'working') return { accent: 'blue', state: 'running', word: 'working' };
+  if (sess.state === 'waiting') return { accent: 'amber', state: undefined, word: 'needs you' };
+  if (sess.state === 'done') return { accent: 'green', state: 'done', word: 'ready' };
+  return { accent: 'grey', state: 'idle', word: 'idle' };
 }
 
 function matchesFilter(sess, filter) {
@@ -149,35 +204,37 @@ async function claudeMappedIcon(inst) {
   dbg(`render claudecode ctx=${inst.context} key=${inst.keyId} filter="${filter}" sessions=${list.length}`);
   if (!filter) {
     // Unmapped: show this key's id so you can add it to cc_keys.json.
-    return renderNeutral({ value: 'CC', label: `map ${inst.keyId}` });
+    return renderMissing(`map ${inst.keyId}`);
   }
-  const sess = pickSession(list, filter);
-  const look = sessionLook(sess);
-  return renderTile({ value: filter, color: look.color, label: look.word });
+  const A = agentFor(pickSession(list, filter));
+  return renderStyle('agent', { accent: A.accent, glyph: 'sparkles', value: filter, label: A.word, state: A.state });
 }
 
 // Cycling tile: one key scans all sessions in a subdir; tap advances. Zero config.
 // Shared by Claude (cc_sessions) and Cursor (cursor_sessions).
-async function sessionCycleIcon(inst, subdir, emptyLabel) {
+async function sessionCycleIcon(inst, subdir, emptyLabel, glyph) {
   const list = await readSessionList(inst.stateDir, subdir);
   inst.cycleList = list; // for onRun bounds
-  if (!list.length) return renderNeutral({ value: '—', label: emptyLabel });
+  if (!list.length) return renderMissing(emptyLabel);
   const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
   const sess = list[idx];
-  const look = sessionLook(sess);
-  const pos = list.length > 1 ? ` ${idx + 1}/${list.length}` : '';
-  dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${look.word}`);
-  return renderTile({ value: sess.label, color: look.color, label: look.word + pos });
+  const A = agentFor(sess);
+  const pos = list.length > 1 ? `${idx + 1}/${list.length}` : '';
+  dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${A.word}`);
+  // Middle = status word + position (e.g. "needs you" / "1/4"); session name is the top title.
+  return renderStyle('agent', { accent: A.accent, glyph, value: A.word, sub: pos, label: sess.label, state: A.state });
 }
 
 // --- Cursor: live AI activity from the tracking DB ---------------------------
 async function cursorAiIcon() {
   const a = await readCursorAiActivity();
-  if (a.offline) return renderNeutral({ value: '—', label: 'cursor?' });
-  const color = a.recent > 0 ? 'blue' : 'grey';
-  const label = a.recent > 0 ? `+${a.recent} now` : 'today';
+  if (a.offline) return renderMissing('cursor?');
+  const gen = a.recent > 0;
   dbg(`render cursorai recent=${a.recent} today=${a.today}`);
-  return renderTile({ value: String(a.today), color, label });
+  return renderStyle('agent', {
+    accent: gen ? 'teal' : 'grey', glyph: 'pointer', value: String(a.today),
+    label: gen ? `+${a.recent} now` : 'today', state: gen ? 'running' : 'idle',
+  });
 }
 
 // Per-key dashboard URL: PI setting -> commander_keys.json[keyId] ->
@@ -193,37 +250,38 @@ async function resolveCommanderBase(inst) {
 async function sprintIcon(inst) {
   const base = await resolveCommanderBase(inst);
   const s = await readSprintStatus(base);
-  if (s.offline) return renderNeutral({ value: '—', label: 'offline' });
-  if (!s.running.length) return renderNeutral({ value: '·', label: 'no sprint' });
+  if (s.offline) return renderMissing('offline');
+  if (!s.running.length) return renderMissing('no sprint');
   const sp = s.running[0];                 // surface the first running sprint
   const { closed, total, label } = sp;
-  const color = total > 0 && closed >= total ? 'green' : total > 0 ? 'blue' : 'grey';
+  const accent = total > 0 && closed >= total ? 'green' : 'teal';
   dbg(`render sprint ctx=${inst.context} ${label} ${closed}/${total} running=${s.running.length}`);
   const suffix = s.running.length > 1 ? ` +${s.running.length - 1}` : '';
-  return renderTile({ value: `${closed}/${total}`, color, label: `s${label}${suffix}` });
+  // ring archetype: accent arc = closed/total, centered "closed/total".
+  return renderStyle('ring', { accent, done: closed, total, value: 0, label: `s${label}${suffix}` });
 }
 
 // --- Commander: agents (coder/tester) ----------------------------------------
 function agentLook(a) {
   const st = (a.status || '').toLowerCase();
-  if (st === 'working') return { color: 'blue', word: a.lastTool || 'working' };
-  if (st.includes('idle') || st.includes('timeout')) return { color: 'grey', word: 'idle' };
-  return { color: 'green', word: 'done' };
+  if (st === 'working') return { accent: 'blue', state: 'running', word: a.lastTool || 'working' };
+  if (st.includes('idle') || st.includes('timeout')) return { accent: 'grey', state: 'idle', word: 'idle' };
+  return { accent: 'green', state: 'done', word: 'done' };
 }
 
 async function cmdAgentsIcon(inst) {
   const base = await resolveCommanderBase(inst);
   const { offline, agents } = await readCommanderAgents(base);
   inst.cycleList = agents; // for onRun bounds
-  if (offline) return renderNeutral({ value: '—', label: 'offline' });
-  if (!agents.length) return renderNeutral({ value: '·', label: 'no agents' });
+  if (offline) return renderMissing('offline');
+  if (!agents.length) return renderMissing('no agents');
   const idx = ((inst.cycleIdx || 0) % agents.length + agents.length) % agents.length;
   const a = agents[idx];
   const look = agentLook(a);
   const pos = agents.length > 1 ? ` ${idx + 1}/${agents.length}` : '';
-  const name = a.issue ? `${a.role} ${a.issue}` : a.role;
-  dbg(`render cmdagents ctx=${inst.context} idx=${idx}/${agents.length} ${name} ${look.word}`);
-  return renderTile({ value: a.role, color: look.color, label: (a.issue || look.word) + pos });
+  dbg(`render cmdagents ctx=${inst.context} idx=${idx}/${agents.length} ${a.role} ${a.issue} ${look.word}`);
+  // value = role, title (top) = issue# (or status word) + position. glyph = code.
+  return renderStyle('agent', { accent: look.accent, glyph: 'code', value: a.role, label: (a.issue || look.word) + pos, state: look.state });
 }
 
 // --- GitHub: REST API rate-limit usage % -------------------------------------
@@ -238,19 +296,19 @@ async function ghRateIcon() {
 async function computeIcon(inst) {
   if (inst.type === ACTION_GHRATE) return ghRateIcon();
   if (inst.type === ACTION_CURSORAI) return cursorAiIcon();
-  if (inst.type === ACTION_CURSORCYCLE) return sessionCycleIcon(inst, 'cursor_sessions', 'no cursor');
+  if (inst.type === ACTION_CURSORCYCLE) return sessionCycleIcon(inst, 'cursor_sessions', 'no cursor', 'pointer');
   if (inst.type === ACTION_SPRINT) return sprintIcon(inst);
   if (inst.type === ACTION_CMDAGENTS) return cmdAgentsIcon(inst);
   if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
-  if (inst.type === ACTION_CLAUDECYCLE) return sessionCycleIcon(inst, 'cc_sessions', 'no claude');
+  if (inst.type === ACTION_CLAUDECYCLE) return sessionCycleIcon(inst, 'cc_sessions', 'no claude', 'sparkles');
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.resolvedProject = await resolveProject(inst);
     inst.lastRead = await readProjectCommit(inst.resolvedProject);
     dbg(`render antigravity ctx=${inst.context} project="${inst.resolvedProject}" read=${JSON.stringify(inst.lastRead)}`);
     return commitIcon(inst.lastRead);
   }
-  inst.lastRead = await readSource(inst.stateDir, inst.source);
-  return fileIcon(inst.lastRead);
+  // Status Tile (and any unspecified action) -> rich style renderer.
+  return statusTileIcon(inst);
 }
 
 async function renderInstance(inst) {
@@ -309,6 +367,7 @@ function startPolling(inst) {
 }
 function stopPolling(inst) {
   closeWatch(inst);
+  if (inst.pulseTimer) { clearInterval(inst.pulseTimer); inst.pulseTimer = null; }
   if (inst.timer) { clearInterval(inst.timer); inst.timer = null; }
 }
 
@@ -358,9 +417,20 @@ function applySettings(inst, settings) {
       }
     }
   } else {
+    // Status Tile: source + style archetype + identity fields.
     inst.intervalMs = FILE_POLL_MS;
     if ('source' in settings) inst.source = String(settings.source || '').trim();
     if ('stateDir' in settings || !inst.stateDir) inst.stateDir = resolveStateDir(settings);
+    if ('style' in settings) inst.style = String(settings.style || 'agent').trim() || 'agent';
+    if (!inst.style) inst.style = 'agent';
+    if ('accent' in settings) inst.accent = String(settings.accent || 'grey').trim() || 'grey';
+    if ('glyph' in settings) inst.glyph = String(settings.glyph || '').trim();
+    if ('label' in settings) inst.label = String(settings.label || '').trim();
+    if ('is_counter' in settings) {
+      const v = settings.is_counter;
+      inst.isCounter = v === true || v === 'true' || v === 'on';
+    }
+    if ('state_dir' in settings) inst.stateDir = resolveStateDir({ stateDir: settings.state_dir });
   }
 }
 

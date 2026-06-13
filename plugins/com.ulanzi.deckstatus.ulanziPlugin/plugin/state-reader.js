@@ -373,13 +373,13 @@ function isCounterPath(p) {
   return !!p && /count\.txt$/i.test(path.basename(p));
 }
 
-const KNOWN_COLORS = new Set(['green', 'amber', 'yellow', 'red', 'blue', 'grey', 'gray']);
+const KNOWN_COLORS = new Set(['green', 'teal', 'blue', 'purple', 'amber', 'yellow', 'red', 'grey', 'gray']);
 
 function normalizeColor(c) {
   const v = String(c || '').trim().toLowerCase();
   if (v === 'yellow') return 'amber';
   if (v === 'gray') return 'grey';
-  return KNOWN_COLORS.has(v) ? (v === 'gray' ? 'grey' : v) : '';
+  return KNOWN_COLORS.has(v) ? v : '';
 }
 
 async function readFileSafe(p) {
@@ -417,8 +417,10 @@ export async function readSource(stateDir, source) {
           missing: false,
           value: obj.value != null ? String(obj.value) : '',
           color: normalizeColor(obj.color),
+          accent: normalizeColor(obj.accent),
           state: obj.state != null ? String(obj.state) : '',
           label: obj.label != null ? String(obj.label) : '',
+          count: obj.count != null ? String(obj.count) : '',
           isCounter: false,
           counterPath: '',
         };
@@ -436,8 +438,10 @@ export async function readSource(stateDir, source) {
         missing: false,
         value,
         color: '',
+        accent: '',
         state: '',
         label: '',
+        count: counter ? value : '',
         isCounter: counter,
         counterPath: counter ? txtPath : '',
       };
