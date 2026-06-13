@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,minimal-ui,viewport-fit=cover" />
+  <title>Claude Code</title>
+  <link rel="stylesheet" href="../libs/css/uspi.css">
+  <style>
+    .panel { padding: 8px 12px; font-size: 12px; line-height: 1.55; }
+    .panel p { margin: 0 0 8px; opacity: 0.85; }
+    .panel b { color: #4c9aff; } .panel .a { color: #e3b341; } .panel .g { color: #3ecf6b; }
+  </style>
+</head>
+<body>
+  <div class="udpi-wrapper hidden uspi-wrapper">
+    <div class="panel">
+      <p>No setup needed. This key aggregates <b>all</b> your Claude Code sessions.</p>
+      <p><b>blue + N</b> = N sessions working &nbsp; <span class="a">amber + N</span> = needs your input &nbsp; <span class="g">✓</span> = all idle.</p>
+      <p>Driven by Claude Code hooks via <code>cc-hook.sh</code>.</p>
+    </div>
+  </div>
+
+  <script src="../libs/js/constants.js"></script>
+  <script src="../libs/js/eventEmitter.js"></script>
+  <script src="../libs/js/timers.js"></script>
+  <script src="../libs/js/utils.js"></script>
+  <script src="../libs/js/ulanziApi.js"></script>
+  <script>
+    $UD.connect();
+    $UD.onConnected(() => document.querySelector('.udpi-wrapper').classList.remove('hidden'));
+  </script>
+</body>
+</html>

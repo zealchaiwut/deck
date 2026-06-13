@@ -12,7 +12,7 @@
 import UlanziApi from './plugin-common-node/index.js';
 import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
-  readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
+  readProjectConfig, writeProjectConfig, DEFAULT_PROJECT, readClaudeSessions,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
 import { appendFileSync, watch, existsSync } from 'fs';
@@ -23,9 +23,11 @@ import { expandPath } from './state-reader.js';
 
 const PLUGIN_UUID = 'com.ulanzi.ulanzistudio.deckstatus';
 const ACTION_ANTIGRAVITY = 'com.ulanzi.ulanzistudio.deckstatus.antigravity';
+const ACTION_CLAUDECODE = 'com.ulanzi.ulanzistudio.deckstatus.claudecode';
 
 const FILE_POLL_MS = 2000;     // deck_state files change often
 const COMMIT_POLL_MS = 30000;  // git age only needs ~minute resolution
+const SESSION_POLL_MS = 1500;  // Claude Code status should feel responsive
 
 const $UD = new UlanziApi();
 const INSTANCES = new Map(); // context -> instance
@@ -101,7 +103,25 @@ async function resolveProject(inst) {
   return DEFAULT_PROJECT;
 }
 
+// --- Claude Code: aggregate all sessions into one light ----------------------
+function claudeIcon(s) {
+  if (s.working > 0) {
+    const label = s.working === 1 && s.workingLabel ? s.workingLabel : 'working';
+    return renderTile({ value: String(s.working), color: 'blue', label });
+  }
+  if (s.waiting > 0) {
+    const label = s.waiting === 1 && s.waitingLabel ? s.waitingLabel : 'needs you';
+    return renderTile({ value: String(s.waiting), color: 'amber', label });
+  }
+  return renderTile({ value: '✓', color: 'green', label: 'idle' }); // all clear
+}
+
 async function computeIcon(inst) {
+  if (inst.type === ACTION_CLAUDECODE) {
+    const s = await readClaudeSessions(inst.stateDir);
+    dbg(`render claudecode ctx=${inst.context} ${JSON.stringify(s)}`);
+    return claudeIcon(s);
+  }
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.resolvedProject = await resolveProject(inst);
     inst.lastRead = await readProjectCommit(inst.resolvedProject);
@@ -175,6 +195,11 @@ function stopPolling(inst) {
 // carries that key, so an empty onAdd delivery can't wipe a path we already have.
 function applySettings(inst, settings) {
   settings = settings || {};
+  if (inst.type === ACTION_CLAUDECODE) {
+    inst.intervalMs = SESSION_POLL_MS;
+    inst.stateDir = resolveStateDir(settings); // where cc_sessions/ lives
+    return;
+  }
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.intervalMs = COMMIT_POLL_MS;
     if (!inst.stateDir) inst.stateDir = resolveStateDir(settings); // for the config file
