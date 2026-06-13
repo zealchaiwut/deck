@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,minimal-ui,viewport-fit=cover" />
+  <title>Cursor</title>
+  <link rel="stylesheet" href="../libs/css/uspi.css">
+  <style>
+    .panel { padding: 8px 12px; font-size: 12px; line-height: 1.55; }
+    .panel p { margin: 0 0 8px; opacity: 0.85; }
+    .panel code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px; font-family: 'SF Mono', Menlo, monospace; }
+    .panel b { color: #4c9aff; } .panel .g { color: #3ecf6b; }
+  </style>
+</head>
+<body>
+  <div class="udpi-wrapper hidden uspi-wrapper">
+    <div class="panel">
+      <p>No setup. Driven by Cursor hooks (<code>cursor-hook.sh</code>) and the AI-code tracking DB.</p>
+      <p><b>Cursor (cycle)</b>: per-workspace state — <b>blue</b>=working, <span class="g">green</span>=done, grey=idle. Tap cycles.</p>
+      <p><b>Cursor AI</b>: AI snippets accepted today; <b>blue + "now"</b> when generating in the last 15 min, grey when idle.</p>
+    </div>
+  </div>
+  <script src="../libs/js/constants.js"></script>
+  <script src="../libs/js/eventEmitter.js"></script>
+  <script src="../libs/js/timers.js"></script>
+  <script src="../libs/js/utils.js"></script>
+  <script src="../libs/js/ulanziApi.js"></script>
+  <script>
+    $UD.connect();
+    $UD.onConnected(() => document.querySelector('.udpi-wrapper').classList.remove('hidden'));
+  </script>
+</body>
+</html>
