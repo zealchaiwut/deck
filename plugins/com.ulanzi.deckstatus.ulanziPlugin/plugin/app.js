@@ -18,6 +18,7 @@ import {
   readSprintStatus, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
+import { render as renderStyle, renderMissing } from './render.js';
 import { appendFileSync, watch, existsSync } from 'fs';
 import { execFile } from 'child_process';
 import os from 'os';
@@ -25,7 +26,9 @@ import path from 'path';
 import { expandPath } from './state-reader.js';
 
 const PLUGIN_UUID = 'com.ulanzi.ulanzistudio.deckstatus';
+const ACTION_STATUSTILE = 'com.ulanzi.ulanzistudio.deckstatus.statustile';
 const ACTION_ANTIGRAVITY = 'com.ulanzi.ulanzistudio.deckstatus.antigravity';
+const PULSE_MS = 700; // running-state glyph pulse cadence
 const ACTION_CLAUDECODE = 'com.ulanzi.ulanzistudio.deckstatus.claudecode';
 const ACTION_CLAUDECYCLE = 'com.ulanzi.ulanzistudio.deckstatus.claudecycle';
 const ACTION_SPRINT = 'com.ulanzi.ulanzistudio.deckstatus.sprint';
@@ -91,14 +94,52 @@ function ageColor(sec) {
   return toHex(COLOR_STOPS[COLOR_STOPS.length - 1][1]); // > 30m -> grey
 }
 
-// --- Status Tile: decide icon from a file read --------------------------------
-function fileIcon(read) {
-  if (!read || read.missing) return renderNeutral({ value: '—' });
-  const value = String(read.value || '').trim();
-  if (value === '' || (read.isCounter && /^0+$/.test(value))) {
-    return renderNeutral({ value: read.isCounter ? '0' : '—', label: read.label });
+// --- Status Tile: rich style-based render (agent|gauge|ring|timestat|repo) ----
+// Merges PI settings (style/accent/glyph/label/is_counter) with live file data
+// (value/color/state/label/count). pulse alpha animates "running" glyphs.
+async function statusTileIcon(inst) {
+  const read = await readSource(inst.stateDir, inst.source);
+  inst.lastRead = read;
+  // running styles pulse; (de)arm the 700ms redraw timer accordingly.
+  const isRunning = !read.missing && read.state === 'running';
+  managePulse(inst, isRunning && (inst.style === 'agent' || inst.style === 'timestat'));
+
+  if (read.missing) return renderMissing(inst.label);
+
+  // count "1/2" -> done/total for the ring style.
+  const count = read.count || (inst.isCounter ? read.value : '');
+  let done, total;
+  const m = /^(\d+)\s*\/\s*(\d+)$/.exec(String(count));
+  if (m) { done = +m[1]; total = +m[2]; }
+
+  const pulse = (Math.sin((inst.pulsePhase || 0) * 0.9) + 1) / 2; // 0..1
+  const data = {
+    accent: read.accent || inst.accent || 'grey',
+    glyph: inst.glyph,
+    label: read.label || inst.label,
+    state: read.state,
+    count,
+    done, total,
+    value: read.value,
+    color: read.color, // gauge threshold override
+    pulse,
+  };
+  return renderStyle(inst.style || 'agent', data);
+}
+
+function managePulse(inst, on) {
+  if (on) {
+    if (!inst.pulseTimer) {
+      inst.pulseTimer = setInterval(() => {
+        inst.pulsePhase = (inst.pulsePhase || 0) + 1;
+        inst.lastIcon = '';
+        renderInstance(inst);
+      }, PULSE_MS);
+    }
+  } else if (inst.pulseTimer) {
+    clearInterval(inst.pulseTimer);
+    inst.pulseTimer = null;
   }
-  return renderTile({ value, color: read.color, label: read.label });
 }
 
 // --- Antigravity: decide icon from a git read ---------------------------------
@@ -249,8 +290,8 @@ async function computeIcon(inst) {
     dbg(`render antigravity ctx=${inst.context} project="${inst.resolvedProject}" read=${JSON.stringify(inst.lastRead)}`);
     return commitIcon(inst.lastRead);
   }
-  inst.lastRead = await readSource(inst.stateDir, inst.source);
-  return fileIcon(inst.lastRead);
+  // Status Tile (and any unspecified action) -> rich style renderer.
+  return statusTileIcon(inst);
 }
 
 async function renderInstance(inst) {
@@ -309,6 +350,7 @@ function startPolling(inst) {
 }
 function stopPolling(inst) {
   closeWatch(inst);
+  if (inst.pulseTimer) { clearInterval(inst.pulseTimer); inst.pulseTimer = null; }
   if (inst.timer) { clearInterval(inst.timer); inst.timer = null; }
 }
 
@@ -358,9 +400,20 @@ function applySettings(inst, settings) {
       }
     }
   } else {
+    // Status Tile: source + style archetype + identity fields.
     inst.intervalMs = FILE_POLL_MS;
     if ('source' in settings) inst.source = String(settings.source || '').trim();
     if ('stateDir' in settings || !inst.stateDir) inst.stateDir = resolveStateDir(settings);
+    if ('style' in settings) inst.style = String(settings.style || 'agent').trim() || 'agent';
+    if (!inst.style) inst.style = 'agent';
+    if ('accent' in settings) inst.accent = String(settings.accent || 'grey').trim() || 'grey';
+    if ('glyph' in settings) inst.glyph = String(settings.glyph || '').trim();
+    if ('label' in settings) inst.label = String(settings.label || '').trim();
+    if ('is_counter' in settings) {
+      const v = settings.is_counter;
+      inst.isCounter = v === true || v === 'true' || v === 'on';
+    }
+    if ('state_dir' in settings) inst.stateDir = resolveStateDir({ stateDir: settings.state_dir });
   }
 }
 

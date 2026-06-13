@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,minimal-ui,viewport-fit=cover" />
-  <title>Deck Status</title>
+  <title>Status Tile</title>
   <link rel="stylesheet" href="../libs/css/uspi.css">
   <style>
     .hint { padding: 4px 12px 10px; font-size: 11px; line-height: 1.5; opacity: 0.7; }
@@ -15,27 +15,61 @@
     <form id="property-inspector">
       <div class="uspi-item">
         <div class="uspi-item-label" data-localize>Source</div>
-        <input class="uspi-item-value" name="source" list="source-suggestions"
-               placeholder="coding_antigravity" value="">
-        <datalist id="source-suggestions">
-          <option value="coding_antigravity"></option>
-          <option value="coding_cursor"></option>
-          <option value="coding_claude-code"></option>
-          <option value="coding_terminal"></option>
+        <input class="uspi-item-value" name="source" list="src-list" placeholder="coding_antigravity" value="">
+        <datalist id="src-list">
+          <option value="demo_agent"></option>
+          <option value="demo_gauge"></option>
           <option value="antigravity_count.txt"></option>
         </datalist>
       </div>
-
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Style</div>
+        <select class="uspi-item-value" name="style">
+          <option value="agent">agent</option>
+          <option value="gauge">gauge</option>
+          <option value="ring">ring</option>
+          <option value="timestat">timestat</option>
+          <option value="repo">repo</option>
+        </select>
+      </div>
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Accent</div>
+        <select class="uspi-item-value" name="accent">
+          <option value="green">green</option>
+          <option value="teal">teal</option>
+          <option value="blue">blue</option>
+          <option value="purple">purple</option>
+          <option value="amber">amber</option>
+          <option value="red">red</option>
+          <option value="grey">grey</option>
+        </select>
+      </div>
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Glyph</div>
+        <input class="uspi-item-value" name="glyph" list="glyph-list" placeholder="sparkles" value="">
+        <datalist id="glyph-list">
+          <option value="sparkles"></option><option value="rocket"></option>
+          <option value="code"></option><option value="pointer"></option>
+          <option value="brand-github"></option><option value="git-branch"></option>
+          <option value="player-play-filled"></option><option value="calendar"></option>
+          <option value="clock"></option><option value="activity"></option>
+        </datalist>
+      </div>
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Label</div>
+        <input class="uspi-item-value" name="label" placeholder="antigravity" value="">
+      </div>
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Counter (tap resets)</div>
+        <input type="checkbox" class="uspi-item-value" name="is_counter">
+      </div>
       <div class="uspi-item">
         <div class="uspi-item-label" data-localize>State dir</div>
-        <input class="uspi-item-value" name="stateDir"
-               placeholder="~/dev/deck/scripts/deck_state" value="">
+        <input class="uspi-item-value" name="state_dir" placeholder="~/dev/deck/scripts/deck_state" value="">
       </div>
     </form>
     <div class="hint">
-      <span data-localize>Tile name</span> (<code>coding_antigravity</code>) <span data-localize>reads</span>
-      <code>tile_&lt;name&gt;.json/.txt</code>, <span data-localize>or give a path like</span>
-      <code>antigravity_count.txt</code>. <span data-localize>Tap a counter key to reset it to 0.</span>
+      <span data-localize>Reads</span> <code>tile_&lt;source&gt;.json/.txt</code> <span data-localize>or a relative path. File fields (value/color/state/count) drive the live look; the dropdowns set identity.</span>
     </div>
   </div>
 

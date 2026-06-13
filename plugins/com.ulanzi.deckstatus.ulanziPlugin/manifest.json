@@ -12,7 +12,7 @@
   "Actions": [
     {
       "Name": "Status Tile",
-      "Tooltip": "Bind a key to a deck_state file and show its live value/color.",
+      "Tooltip": "Render a deck_state source as a styled tile: agent | gauge | ring | timestat | repo. Tap resets counters.",
       "Icon": "resources/action.png",
       "PropertyInspectorPath": "property-inspector/inspector.html",
       "UUID": "com.ulanzi.ulanzistudio.deckstatus.statustile",

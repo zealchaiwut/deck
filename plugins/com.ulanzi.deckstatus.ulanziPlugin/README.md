@@ -21,6 +21,30 @@ exception is resetting an `*_count.txt` counter to `0` when you tap its key.
 `green|amber|red|blue|grey` (default grey). A `.txt` whose value is `0`/empty,
 or a missing file, renders a dim neutral `0`/`—` tile.
 
+## Status Tile styles (rich render engine)
+
+The **Status Tile** action renders a `deck_state` source in one of five archetypes
+(196×196 SVG, dark `#191a1d` base, bundled Tabler glyphs — no runtime fetch):
+
+| `style` | Look |
+|---------|------|
+| `agent` | radial accent glow + hero glyph; top-right count/✓ badge; running→pulsing glyph, error→red, done→green check, idle→dim no-glow |
+| `gauge` | glyph + big `%` + bottom meter bar; color green>50 / amber 20–50 / red<20 unless `color` overrides |
+| `ring`  | progress ring (accent arc = `count` "done/total" or `value` %) + centered text |
+| `timestat` | glyph + big short value (e.g. `14m`) + state label; color by state |
+| `repo`  | dim grey glyph + mono label (recedes) |
+
+PI fields: `source`, `style`, `accent` (green/teal/blue/purple/amber/red/grey),
+`glyph` (Tabler name), `label`, `is_counter` (tap resets the count file), `state_dir`.
+File JSON drives the live data: `{"value","color","state","label","count"}` (any subset);
+`state` ∈ `running|done|error|idle` overrides color. `count` `"1/2"` feeds the ring/badge.
+Running `agent`/`timestat` tiles repaint every 700ms to animate the pulse.
+
+### Seed test files (already written to `deck_state/`)
+- `tile_demo_agent.json` = `{state:"running",accent:"green",count:"1/2",label:"antigravity"}` → green pulsing glyph + `1/2` badge.
+- `tile_demo_gauge.json` = `{value:"18",color:"amber",label:"disk"}` → amber gauge at 18% with bottom meter.
+- `antigravity_count.txt` = `3` → counter tile shows `3`, tap resets to `0`.
+
 ## Action: "Antigravity" (Keypad, all devices)
 
 Bind a key to a **project path** (a git repo). The tile shows that repo's latest
