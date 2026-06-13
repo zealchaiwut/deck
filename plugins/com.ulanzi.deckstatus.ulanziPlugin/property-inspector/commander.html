@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,minimal-ui,viewport-fit=cover" />
+  <title>Commander</title>
+  <link rel="stylesheet" href="../libs/css/uspi.css">
+  <style>
+    .hint { padding: 4px 12px 10px; font-size: 11px; line-height: 1.55; opacity: 0.75; }
+    .hint code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px; font-family: 'SF Mono', Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <div class="udpi-wrapper hidden uspi-wrapper">
+    <form id="property-inspector">
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Dashboard URL</div>
+        <input class="uspi-item-value" name="apiBase" placeholder="http://127.0.0.1:8001" value="">
+      </div>
+    </form>
+    <div class="hint">
+      Dashboard base URL for <b>this key</b> — local or a remote machine, e.g.
+      <code>http://192.168.1.50:8001</code>. Saved per-key (in
+      <code>deck_state/commander_keys.json</code>), so different keys can watch
+      different machines. Blank = <code>http://127.0.0.1:8001</code>.
+      <br>Sprint: tap opens that dashboard. Agents: tap cycles coder/tester + issue#.
+    </div>
+  </div>
+  <script src="../libs/js/constants.js"></script>
+  <script src="../libs/js/eventEmitter.js"></script>
+  <script src="../libs/js/timers.js"></script>
+  <script src="../libs/js/utils.js"></script>
+  <script src="../libs/js/ulanziApi.js"></script>
+  <script>
+    const FORM = '#property-inspector';
+    const input = () => document.querySelector('[name="apiBase"]');
+    $UD.connect();
+    $UD.onConnected(() => document.querySelector('.udpi-wrapper').classList.remove('hidden'));
+    function load(p){ if (p && typeof p.apiBase === 'string' && input()) input().value = p.apiBase; }
+    $UD.onAdd((m) => load(m && m.param));
+    $UD.onParamFromApp((m) => load(m && m.param));
+    $UD.onDidReceiveSettings((m) => load(m && m.settings));
+    function save(){ const el = input(); if (!el) return; const p = { apiBase: el.value.trim() }; $UD.setSettings(p); $UD.sendParamFromPlugin(p); }
+    const form = document.getElementById('property-inspector');
+    form.addEventListener('change', save);
+    form.addEventListener('blur', save, true);
+    form.addEventListener('input', Utils.debounce(save, 350));
+    form.addEventListener('keyup', (e) => { if (e.key === 'Enter') save(); });
+  </script>
+</body>
+</html>

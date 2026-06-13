@@ -61,6 +61,32 @@
       "SupportedInMultiActions": false,
       "Controllers": ["Keypad"],
       "Devices": []
+    },
+    {
+      "Name": "Commander Sprint",
+      "Tooltip": "Running commander sprint progress (closed/total). Tap opens the dashboard.",
+      "Icon": "resources/sprint.png",
+      "PropertyInspectorPath": "property-inspector/commander.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.sprint",
+      "States": [
+        { "Name": "Default", "Image": "resources/sprint.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
+    },
+    {
+      "Name": "Commander Agents",
+      "Tooltip": "Commander coder/tester agents + issue#; tap to cycle through them.",
+      "Icon": "resources/cmdagents.png",
+      "PropertyInspectorPath": "property-inspector/commander.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.cmdagents",
+      "States": [
+        { "Name": "Default", "Image": "resources/cmdagents.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
     }
   ],
   "OS": [

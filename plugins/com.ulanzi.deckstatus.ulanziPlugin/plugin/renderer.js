@@ -57,20 +57,24 @@ function valueFontSize(value) {
 }
 
 // Render an active tile: accent strip on top, big value, optional small label.
+// Deck sits at a slope -> the bottom of each tile is hidden. So the label (the
+// "second line") goes at the TOP, just under the accent bar, and the big value
+// stays at one fixed center position across every tile.
+const LABEL_Y = 46;    // top, under the accent bar
+const VALUE_Y = 128;   // constant middle baseline for all tiles
+const LABEL_SIZE = 24; // top line ("idle 3/3", "ready", ...)
+
 export function renderTile({ value, color, label }) {
   const a = accent(color);
   const fs = valueFontSize(value);
   const hasLabel = label && String(label).trim();
-  const valueY = hasLabel ? 118 : 128;
 
   const body = [
     `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="${BG}"/>`,
     // accent bar across the top
     `<rect x="0" y="0" width="${SIZE}" height="18" fill="${a}"/>`,
-    // accent dot bottom-center as a subtle state cue
-    `<circle cx="${SIZE / 2}" cy="${SIZE - 14}" r="5" fill="${a}"/>`,
-    textShadow(String(value), SIZE / 2, valueY, fs, '700', TEXT),
-    hasLabel ? textShadow(truncate(String(label), 18), SIZE / 2, 168, 22, '600', '#cfcfd6') : '',
+    hasLabel ? textShadow(truncate(String(label), 18), SIZE / 2, LABEL_Y, LABEL_SIZE, '600', '#cfcfd6') : '',
+    textShadow(String(value), SIZE / 2, VALUE_Y, fs, '700', TEXT),
   ].join('');
 
   return toDataUrl(svgDoc(body));
@@ -82,8 +86,8 @@ export function renderNeutral({ value = '—', label = '' } = {}) {
   const body = [
     `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="${BG}"/>`,
     `<rect x="0" y="0" width="${SIZE}" height="18" fill="${COLORS.grey}"/>`,
-    textShadow(String(value), SIZE / 2, hasLabel ? 116 : 126, valueFontSize(value), '700', DIM_TEXT),
-    hasLabel ? text(truncate(String(label), 18), SIZE / 2, 166, 22, '600', DIM_TEXT) : '',
+    hasLabel ? text(truncate(String(label), 18), SIZE / 2, LABEL_Y, LABEL_SIZE, '600', DIM_TEXT) : '',
+    textShadow(String(value), SIZE / 2, VALUE_Y, valueFontSize(value), '700', DIM_TEXT),
   ].join('');
   return toDataUrl(svgDoc(body));
 }
