@@ -1,0 +1,64 @@
+#!/bin/bash
+# post-commit — Antigravity completion counter proxy.
+#
+# Antigravity has no completion API, so we treat each git commit as a "done"
+# signal. This hook is INERT unless ANTIGRAVITY_TRACK=1 is set in the env:
+# install it everywhere, enable it only where you want commit tracking.
+#
+# When ANTIGRAVITY_TRACK=1:
+#   - increments deck_state/antigravity_count.txt (+1 per commit)
+#   - writes a deck tile via notify-coding.sh antigravity done "<branch>: <subj>"
+#   - fires a macOS banner: "Antigravity done ×<N>"
+#
+# Hard rule: NEVER block or fail the commit. Every step is best-effort; any
+# error logs to stderr and the hook still exits 0.
+
+# Inert unless explicitly enabled. Exit before doing anything else.
+[ "${ANTIGRAVITY_TRACK:-0}" = "1" ] || exit 0
+
+log() { printf 'post-commit(antigravity): %s\n' "$*" >&2; }
+
+# Everything below is wrapped so a failure can't abort the commit.
+{
+  HOME_DIR="${DECK_TOOLS_HOME:-$HOME/dev/deck/scripts}"
+  STATE="$HOME_DIR/deck_state"
+  mkdir -p "$STATE" 2>/dev/null || log "cannot create state dir '$STATE'"
+
+  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || BRANCH="?"
+  SUBJECT="$(git log -1 --pretty=%s 2>/dev/null)" || SUBJECT="?"
+
+  # --- increment counter ----------------------------------------------------
+  COUNT_FILE="$STATE/antigravity_count.txt"
+  N="$(cat "$COUNT_FILE" 2>/dev/null)"
+  case "$N" in
+    ''|*[!0-9]*) N=0 ;;   # missing or garbage => start at 0
+  esac
+  N=$((N + 1))
+  if printf '%s\n' "$N" > "$COUNT_FILE.tmp" 2>/dev/null; then
+    mv -f "$COUNT_FILE.tmp" "$COUNT_FILE" 2>/dev/null || log "failed to move counter file"
+  else
+    log "failed to write counter file '$COUNT_FILE'"
+  fi
+
+  # --- deck tile (keep the existing pipeline) -------------------------------
+  NOTIFY="$HOME_DIR/notify-coding.sh"
+  if [ -x "$NOTIFY" ]; then
+    # Point notify at our resolved state dir so tiles land beside the counter.
+    DECK_STATE_DIR="$STATE" "$NOTIFY" antigravity done "${BRANCH}: ${SUBJECT}" >/dev/null 2>&1 \
+      || log "notify-coding.sh failed"
+  else
+    log "notify-coding.sh not executable at '$NOTIFY'"
+  fi
+
+  # --- macOS banner ---------------------------------------------------------
+  TITLE="Antigravity done ×${N}"
+  BODY="${BRANCH}: ${SUBJECT}"
+  # Escape double quotes for AppleScript string literals.
+  AS_TITLE="${TITLE//\"/\\\"}"
+  AS_BODY="${BODY//\"/\\\"}"
+  osascript -e "display notification \"$AS_BODY\" with title \"$AS_TITLE\" sound name \"Glass\"" \
+    >/dev/null 2>&1 || log "osascript banner failed (notifications may be blocked)"
+
+} || log "unexpected error; commit unaffected"
+
+exit 0

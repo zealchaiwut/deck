@@ -1,0 +1,47 @@
+{
+  "Author": "Chaiwut Chaianuchittrakul",
+  "Name": "Deck Status",
+  "Description": "Render live status from local deck_state files (written by your scripts) onto deck keys. Reads tile_<name>.json / .txt and integer counter files; this plugin only reads, never writes (except resetting the antigravity counter on tap).",
+  "Icon": "resources/icon.png",
+  "Version": "1.0.0",
+  "Category": "Deck Status",
+  "CategoryIcon": "resources/icon.png",
+  "CodePath": "plugin/app.js",
+  "Type": "JavaScript",
+  "UUID": "com.ulanzi.ulanzistudio.deckstatus",
+  "Actions": [
+    {
+      "Name": "Status Tile",
+      "Tooltip": "Bind a key to a deck_state file and show its live value/color.",
+      "Icon": "resources/action.png",
+      "PropertyInspectorPath": "property-inspector/inspector.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.statustile",
+      "States": [
+        { "Name": "Default", "Image": "resources/action.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
+    },
+    {
+      "Name": "Antigravity",
+      "Tooltip": "Bind a key to a project path; show its latest commit hash + time since.",
+      "Icon": "resources/antigravity.png",
+      "PropertyInspectorPath": "property-inspector/antigravity.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.antigravity",
+      "States": [
+        { "Name": "Default", "Image": "resources/antigravity.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
+    }
+  ],
+  "OS": [
+    { "Platform": "mac", "MinimumVersion": "10.15" },
+    { "Platform": "windows", "MinimumVersion": "10" }
+  ],
+  "Software": {
+    "MinVersion": "3.0.11"
+  }
+}

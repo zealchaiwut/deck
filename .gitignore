@@ -1,0 +1,11 @@
+# Runtime deck tile state written by notify-coding.sh
+deck_state/
+
+# Node deps (run `npm install` in the plugin folder on deploy)
+node_modules/
+
+# codedb tool snapshot
+codedb.snapshot
+
+# macOS
+.DS_Store

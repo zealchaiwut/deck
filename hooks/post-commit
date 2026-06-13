@@ -1,0 +1,42 @@
+#!/bin/bash
+# post-commit — Antigravity agent-work tracker (PROXY hook).
+#
+# WHY A PROXY: Antigravity has no external "agent finished" hook, so we use the
+# git commit as a stand-in. This fires when a commit LANDS, not when the agent
+# truly finishes — close enough to mark a coding session "done" on the deck.
+#
+# WHAT IT DOES: on commit, calls notify-coding.sh to report:
+#     notify-coding.sh antigravity done "<branch>: <subject>"
+#
+# ENABLE PER-REPO: this hook is INERT unless ANTIGRAVITY_TRACK=1 is in the env.
+#   Turn it on for a session:   export ANTIGRAVITY_TRACK=1
+#   Or per-commit:              ANTIGRAVITY_TRACK=1 git commit -m "..."
+#   Leave it unset in repos where you are not using Antigravity.
+#
+# UNINSTALL: install-hooks.sh backs up any prior hook to
+#   .git/hooks/post-commit.bak.<timestamp>. To restore, move that backup back
+#   over .git/hooks/post-commit (or just delete this file if there was none).
+#
+# SAFETY: never blocks or fails the commit. Any error logs to stderr; exit 0.
+
+# Path to notify-coding.sh. Prefers $DECK_TOOLS_HOME; edit the fallback below.
+DECK_TOOLS_HOME="${DECK_TOOLS_HOME:-$HOME/dev/deck/scripts}"
+NOTIFY="$DECK_TOOLS_HOME/notify-coding.sh"
+
+# Guard: only fire when explicitly enabled for this repo/session.
+if [ "${ANTIGRAVITY_TRACK:-}" != "1" ]; then
+  exit 0
+fi
+
+{
+  if [ ! -x "$NOTIFY" ]; then
+    echo "post-commit: notify-coding.sh not found/executable at $NOTIFY" >&2
+  else
+    BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    SUBJECT="$(git log -1 --pretty=%s 2>/dev/null || echo '?')"
+    "$NOTIFY" antigravity done "$BRANCH: $SUBJECT" \
+      || echo "post-commit: notify-coding.sh failed (non-fatal)" >&2
+  fi
+} 2>&1
+
+exit 0
