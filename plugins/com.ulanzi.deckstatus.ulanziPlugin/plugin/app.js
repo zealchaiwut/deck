@@ -15,7 +15,7 @@ import {
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
   readClaudeSessionList, readKeyMap,
   readCommanderApi, readCommanderKeyMap, writeCommanderKey,
-  readSprintStatus, readCommanderAgents,
+  readSprintStatus, readCommanderAgents, readGithubRate,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
 import { appendFileSync, watch, existsSync } from 'fs';
@@ -30,11 +30,13 @@ const ACTION_CLAUDECODE = 'com.ulanzi.ulanzistudio.deckstatus.claudecode';
 const ACTION_CLAUDECYCLE = 'com.ulanzi.ulanzistudio.deckstatus.claudecycle';
 const ACTION_SPRINT = 'com.ulanzi.ulanzistudio.deckstatus.sprint';
 const ACTION_CMDAGENTS = 'com.ulanzi.ulanzistudio.deckstatus.cmdagents';
+const ACTION_GHRATE = 'com.ulanzi.ulanzistudio.deckstatus.ghrate';
 
 const FILE_POLL_MS = 2000;      // deck_state files change often
 const COMMIT_POLL_MS = 30000;   // git age only needs ~minute resolution
 const SESSION_POLL_MS = 1500;   // Claude Code status should feel responsive
 const COMMANDER_POLL_MS = 4000; // dashboard API; don't hammer it
+const GHRATE_POLL_MS = 60000;   // rate limit is a slow gauge (hourly window)
 
 const COMMANDER_ACTIONS = new Set([ACTION_SPRINT, ACTION_CMDAGENTS]);
 
@@ -210,7 +212,17 @@ async function cmdAgentsIcon(inst) {
   return renderTile({ value: a.role, color: look.color, label: (a.issue || look.word) + pos });
 }
 
+// --- GitHub: REST API rate-limit usage % -------------------------------------
+async function ghRateIcon() {
+  const r = await readGithubRate();
+  if (r.offline) return renderNeutral({ value: '—', label: 'gh?' });
+  const color = r.pct >= 85 ? 'red' : r.pct >= 60 ? 'amber' : 'green';
+  dbg(`render ghrate ${r.used}/${r.limit} ${r.pct}% reset=${r.resetMins}m`);
+  return renderTile({ value: `${r.pct}%`, color, label: `rst ${r.resetMins}m` });
+}
+
 async function computeIcon(inst) {
+  if (inst.type === ACTION_GHRATE) return ghRateIcon();
   if (inst.type === ACTION_SPRINT) return sprintIcon(inst);
   if (inst.type === ACTION_CMDAGENTS) return cmdAgentsIcon(inst);
   if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
@@ -288,6 +300,10 @@ function stopPolling(inst) {
 // carries that key, so an empty onAdd delivery can't wipe a path we already have.
 function applySettings(inst, settings) {
   settings = settings || {};
+  if (inst.type === ACTION_GHRATE) {
+    inst.intervalMs = GHRATE_POLL_MS; // zero-config; gh handles auth
+    return;
+  }
   if (COMMANDER_ACTIONS.has(inst.type)) {
     inst.intervalMs = COMMANDER_POLL_MS;
     inst.stateDir = resolveStateDir(settings);

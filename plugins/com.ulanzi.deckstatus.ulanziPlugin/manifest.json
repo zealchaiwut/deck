@@ -87,6 +87,19 @@
       "SupportedInMultiActions": false,
       "Controllers": ["Keypad"],
       "Devices": []
+    },
+    {
+      "Name": "GitHub API Usage",
+      "Tooltip": "GitHub REST API rate-limit usage % for the hourly window. Tap to refresh.",
+      "Icon": "resources/ghrate.png",
+      "PropertyInspectorPath": "property-inspector/ghrate.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.ghrate",
+      "States": [
+        { "Name": "Default", "Image": "resources/ghrate.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
     }
   ],
   "OS": [
