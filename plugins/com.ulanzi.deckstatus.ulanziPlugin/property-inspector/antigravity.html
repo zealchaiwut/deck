@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,minimal-ui,viewport-fit=cover" />
+  <title>Antigravity</title>
+  <link rel="stylesheet" href="../libs/css/uspi.css">
+  <style>
+    .hint { padding: 4px 12px 10px; font-size: 11px; line-height: 1.5; opacity: 0.7; }
+    .hint code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px; font-family: 'SF Mono', Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <div class="udpi-wrapper hidden uspi-wrapper">
+    <form id="property-inspector">
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Project path</div>
+        <input class="uspi-item-value" name="projectPath"
+               placeholder="~/dev/commander/prd" value="">
+      </div>
+    </form>
+    <div class="hint">
+      <span data-localize>Shows the latest commit hash + time since. Tap the key to open Antigravity.</span>
+      <span data-localize>Optional: if blank, the tile reads</span>
+      <code>deck_state/antigravity_project.txt</code>
+      <span data-localize>(or defaults to ~/dev/commander/prd).</span>
+    </div>
+  </div>
+
+  <script src="../libs/js/constants.js"></script>
+  <script src="../libs/js/eventEmitter.js"></script>
+  <script src="../libs/js/timers.js"></script>
+  <script src="../libs/js/utils.js"></script>
+  <script src="../libs/js/ulanziApi.js"></script>
+  <script src="./antigravity.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "Name": "Deck Status",
+  "Description": "Render live status from local deck_state files onto deck keys.",
+  "Actions": [
+    {
+      "Name": "Status Tile",
+      "Tooltip": "Bind a key to a deck_state file and show its live value/color."
+    }
+  ],
+  "Localization": {
+    "Source": "Source",
+    "State dir": "State dir",
+    "Tile name": "Tile name",
+    "reads": "reads",
+    "or give a path like": "or give a path like",
+    "Tap a counter key to reset it to 0.": "Tap a counter key to reset it to 0."
+  }
+}

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,minimal-ui,viewport-fit=cover" />
+  <title>Deck Status</title>
+  <link rel="stylesheet" href="../libs/css/uspi.css">
+  <style>
+    .hint { padding: 4px 12px 10px; font-size: 11px; line-height: 1.5; opacity: 0.7; }
+    .hint code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px; font-family: 'SF Mono', Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <div class="udpi-wrapper hidden uspi-wrapper">
+    <form id="property-inspector">
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>Source</div>
+        <input class="uspi-item-value" name="source" list="source-suggestions"
+               placeholder="coding_antigravity" value="">
+        <datalist id="source-suggestions">
+          <option value="coding_antigravity"></option>
+          <option value="coding_cursor"></option>
+          <option value="coding_claude-code"></option>
+          <option value="coding_terminal"></option>
+          <option value="antigravity_count.txt"></option>
+        </datalist>
+      </div>
+
+      <div class="uspi-item">
+        <div class="uspi-item-label" data-localize>State dir</div>
+        <input class="uspi-item-value" name="stateDir"
+               placeholder="~/dev/deck/scripts/deck_state" value="">
+      </div>
+    </form>
+    <div class="hint">
+      <span data-localize>Tile name</span> (<code>coding_antigravity</code>) <span data-localize>reads</span>
+      <code>tile_&lt;name&gt;.json/.txt</code>, <span data-localize>or give a path like</span>
+      <code>antigravity_count.txt</code>. <span data-localize>Tap a counter key to reset it to 0.</span>
+    </div>
+  </div>
+
+  <script src="../libs/js/constants.js"></script>
+  <script src="../libs/js/eventEmitter.js"></script>
+  <script src="../libs/js/timers.js"></script>
+  <script src="../libs/js/utils.js"></script>
+  <script src="../libs/js/ulanziApi.js"></script>
+  <script src="./inspector.js"></script>
+</body>
+</html>
