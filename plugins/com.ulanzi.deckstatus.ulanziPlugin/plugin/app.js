@@ -14,6 +14,8 @@ import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
   readClaudeSessionList, readKeyMap,
+  readCommanderApi, readCommanderKeyMap, writeCommanderKey,
+  readSprintStatus, readCommanderAgents,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
 import { appendFileSync, watch, existsSync } from 'fs';
@@ -26,10 +28,15 @@ const PLUGIN_UUID = 'com.ulanzi.ulanzistudio.deckstatus';
 const ACTION_ANTIGRAVITY = 'com.ulanzi.ulanzistudio.deckstatus.antigravity';
 const ACTION_CLAUDECODE = 'com.ulanzi.ulanzistudio.deckstatus.claudecode';
 const ACTION_CLAUDECYCLE = 'com.ulanzi.ulanzistudio.deckstatus.claudecycle';
+const ACTION_SPRINT = 'com.ulanzi.ulanzistudio.deckstatus.sprint';
+const ACTION_CMDAGENTS = 'com.ulanzi.ulanzistudio.deckstatus.cmdagents';
 
-const FILE_POLL_MS = 2000;     // deck_state files change often
-const COMMIT_POLL_MS = 30000;  // git age only needs ~minute resolution
-const SESSION_POLL_MS = 1500;  // Claude Code status should feel responsive
+const FILE_POLL_MS = 2000;      // deck_state files change often
+const COMMIT_POLL_MS = 30000;   // git age only needs ~minute resolution
+const SESSION_POLL_MS = 1500;   // Claude Code status should feel responsive
+const COMMANDER_POLL_MS = 4000; // dashboard API; don't hammer it
+
+const COMMANDER_ACTIONS = new Set([ACTION_SPRINT, ACTION_CMDAGENTS]);
 
 const $UD = new UlanziApi();
 const INSTANCES = new Map(); // context -> instance
@@ -157,7 +164,55 @@ async function claudeCycleIcon(inst) {
   return renderTile({ value: sess.label, color: look.color, label: look.word + pos });
 }
 
+// Per-key dashboard URL: PI setting -> commander_keys.json[keyId] ->
+// global commander_api.txt -> default. So one key can watch a remote machine.
+async function resolveCommanderBase(inst) {
+  if (inst.apiBase) return inst.apiBase;
+  const km = await readCommanderKeyMap(inst.stateDir);
+  if (km[inst.keyId]) return km[inst.keyId];
+  return readCommanderApi(inst.stateDir);
+}
+
+// --- Commander: sprint progress ----------------------------------------------
+async function sprintIcon(inst) {
+  const base = await resolveCommanderBase(inst);
+  const s = await readSprintStatus(base);
+  if (s.offline) return renderNeutral({ value: '—', label: 'offline' });
+  if (!s.running.length) return renderNeutral({ value: '·', label: 'no sprint' });
+  const sp = s.running[0];                 // surface the first running sprint
+  const { closed, total, label } = sp;
+  const color = total > 0 && closed >= total ? 'green' : total > 0 ? 'blue' : 'grey';
+  dbg(`render sprint ctx=${inst.context} ${label} ${closed}/${total} running=${s.running.length}`);
+  const suffix = s.running.length > 1 ? ` +${s.running.length - 1}` : '';
+  return renderTile({ value: `${closed}/${total}`, color, label: `s${label}${suffix}` });
+}
+
+// --- Commander: agents (coder/tester) ----------------------------------------
+function agentLook(a) {
+  const st = (a.status || '').toLowerCase();
+  if (st === 'working') return { color: 'blue', word: a.lastTool || 'working' };
+  if (st.includes('idle') || st.includes('timeout')) return { color: 'grey', word: 'idle' };
+  return { color: 'green', word: 'done' };
+}
+
+async function cmdAgentsIcon(inst) {
+  const base = await resolveCommanderBase(inst);
+  const { offline, agents } = await readCommanderAgents(base);
+  inst.cycleList = agents; // for onRun bounds
+  if (offline) return renderNeutral({ value: '—', label: 'offline' });
+  if (!agents.length) return renderNeutral({ value: '·', label: 'no agents' });
+  const idx = ((inst.cycleIdx || 0) % agents.length + agents.length) % agents.length;
+  const a = agents[idx];
+  const look = agentLook(a);
+  const pos = agents.length > 1 ? ` ${idx + 1}/${agents.length}` : '';
+  const name = a.issue ? `${a.role} ${a.issue}` : a.role;
+  dbg(`render cmdagents ctx=${inst.context} idx=${idx}/${agents.length} ${name} ${look.word}`);
+  return renderTile({ value: a.role, color: look.color, label: (a.issue || look.word) + pos });
+}
+
 async function computeIcon(inst) {
+  if (inst.type === ACTION_SPRINT) return sprintIcon(inst);
+  if (inst.type === ACTION_CMDAGENTS) return cmdAgentsIcon(inst);
   if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
   if (inst.type === ACTION_CLAUDECYCLE) return claudeCycleIcon(inst);
   if (inst.type === ACTION_ANTIGRAVITY) {
@@ -233,6 +288,21 @@ function stopPolling(inst) {
 // carries that key, so an empty onAdd delivery can't wipe a path we already have.
 function applySettings(inst, settings) {
   settings = settings || {};
+  if (COMMANDER_ACTIONS.has(inst.type)) {
+    inst.intervalMs = COMMANDER_POLL_MS;
+    inst.stateDir = resolveStateDir(settings);
+    inst.keyId = ($UD.decodeContext(inst.context) || {}).key || '?';
+    // A URL set in the Ulanzi PI persists PER KEY (commander_keys.json), so one
+    // key can point at localhost and another at a remote machine.
+    if ('apiBase' in settings) {
+      inst.apiBase = String(settings.apiBase || '').trim();
+      if (inst.apiBase) {
+        writeCommanderKey(inst.stateDir, inst.keyId, inst.apiBase)
+          .then((ok) => dbg(`persisted key ${inst.keyId} -> ${inst.apiBase} (${ok})`));
+      }
+    }
+    return; // base resolved per render via resolveCommanderBase
+  }
   if (inst.type === ACTION_CLAUDECODE || inst.type === ACTION_CLAUDECYCLE) {
     inst.intervalMs = SESSION_POLL_MS;
     inst.stateDir = resolveStateDir(settings);          // where cc_sessions/ lives
@@ -316,7 +386,15 @@ $UD.onDidReceiveSettings((msg) => {
 //   Status Tile   -> reset an antigravity-counter file if bound to one, else refresh.
 $UD.onRun(async (msg) => {
   const inst = INSTANCES.get(msg.context) || ensureInstance(msg.context, settingsOf(msg));
-  if (inst.type === ACTION_CLAUDECYCLE) {
+  if (inst.type === ACTION_SPRINT) {
+    const base = await resolveCommanderBase(inst);
+    log(`tap sprint -> open dashboard ${base}`);
+    execFile('open', [base], (err) => { if (err) dbg(`open dashboard failed: ${err.message}`); });
+  } else if (inst.type === ACTION_CMDAGENTS) {
+    const n = (inst.cycleList || []).length || 1;
+    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next agent
+    log(`tap cmdagents -> idx ${inst.cycleIdx}/${n}`);
+  } else if (inst.type === ACTION_CLAUDECYCLE) {
     const n = (inst.cycleList || []).length || 1;
     inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next session
     log(`tap cycle -> idx ${inst.cycleIdx}/${n}`);

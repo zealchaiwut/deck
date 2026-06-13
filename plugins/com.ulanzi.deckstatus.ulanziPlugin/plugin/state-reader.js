@@ -58,6 +58,106 @@ export async function writeProjectConfig(stateDir, projectPath) {
   }
 }
 
+// --- Commander dashboard API -------------------------------------------------
+export const COMMANDER_API_DEFAULT = 'http://127.0.0.1:8001';
+
+// Base URL from deck_state/commander_api.txt (one line) or the default.
+export async function readCommanderApi(stateDir) {
+  try {
+    const txt = await fs.readFile(path.join(stateDir, 'commander_api.txt'), 'utf8');
+    return txt.trim() || COMMANDER_API_DEFAULT;
+  } catch {
+    return COMMANDER_API_DEFAULT;
+  }
+}
+
+// Per-deck-key dashboard URL map: deck_state/commander_keys.json
+//   { "0_0": "http://127.0.0.1:8001", "0_1": "http://192.168.1.50:8001" }
+// Lets one key watch the local dashboard and another a REMOTE machine.
+export async function readCommanderKeyMap(stateDir) {
+  try {
+    const obj = JSON.parse(await fs.readFile(path.join(stateDir, 'commander_keys.json'), 'utf8'));
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch {
+    return {};
+  }
+}
+
+// Persist one key's URL (merge), so the Ulanzi PI edit sticks per-key.
+export async function writeCommanderKey(stateDir, keyId, base) {
+  const b = String(base || '').trim();
+  if (!keyId || !b) return false;
+  try {
+    await fs.mkdir(stateDir, { recursive: true });
+    const map = await readCommanderKeyMap(stateDir);
+    map[keyId] = b;
+    await fs.writeFile(path.join(stateDir, 'commander_keys.json'), JSON.stringify(map, null, 2) + '\n', 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// GET JSON, best-effort. Returns null on any error / non-200 / timeout.
+async function fetchJson(url) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(2500) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+// /api/sprint-status -> { offline, running: [{label,closed,total,wallSecs}] }
+export async function readSprintStatus(base) {
+  const d = await fetchJson(`${base}/api/sprint-status`);
+  if (!d) return { offline: true, running: [] };
+  const running = (d.running_sprints || []).map((s) => ({
+    label: String(s.sprint_label || '').replace(/^sprint-/, ''),
+    closed: s.progress?.closed ?? 0,
+    total: s.progress?.total ?? 0,
+    wallSecs: s.wall_clock_secs || 0,
+  }));
+  return { offline: false, running };
+}
+
+// /api/agents -> { offline, agents: [...] }. Commander agents that are CURRENTLY
+// relevant only: working now, or seen in the last AGENT_FRESH_SEC. The endpoint
+// returns the full historical table, so without this filter you'd cycle dozens
+// of long-dead agents. Sorted working-first, then most-recently-seen.
+const AGENT_FRESH_SEC = 15 * 60;
+
+export async function readCommanderAgents(base) {
+  const d = await fetchJson(`${base}/api/agents`);
+  if (!Array.isArray(d)) return { offline: true, agents: [] };
+  const now = Date.now();
+  const agents = d
+    .filter((a) => String(a.working_dir || '').toLowerCase().includes('commander'))
+    .map((a) => {
+      const parts = String(a.name || '').split('·');
+      const issue = (parts.find((p) => /^issue-\d+/.test(p)) || '').replace('issue-', '#');
+      // last_seen is naive UTC (no tz) -> append Z.
+      const t = Date.parse(String(a.last_seen || '') + 'Z');
+      const ageSec = Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : Infinity;
+      return {
+        role: parts[0] || 'agent',
+        issue,
+        status: String(a.status || ''),
+        lastTool: String(a.last_tool || ''),
+        name: String(a.name || ''),
+        ageSec,
+      };
+    })
+    .filter((a) => a.status === 'working' || a.ageSec < AGENT_FRESH_SEC)
+    .sort((x, y) => {
+      const wx = x.status === 'working' ? 0 : 1;
+      const wy = y.status === 'working' ? 0 : 1;
+      return wx - wy || x.ageSec - y.ageSec; // working first, then freshest
+    });
+  return { offline: false, agents };
+}
+
 // Aggregate Claude Code session files written by cc-hook.sh into one summary.
 // Each file is deck_state/cc_sessions/<id>.json = {state,cwd,label,ts}.
 //   working/waiting count only when fresh (a crashed session leaves a stale
