@@ -35,6 +35,32 @@
       "SupportedInMultiActions": false,
       "Controllers": ["Keypad"],
       "Devices": []
+    },
+    {
+      "Name": "Claude Session",
+      "Tooltip": "One key = one Claude Code session/project. blue=working, green=ready, amber=needs you.",
+      "Icon": "resources/claudecode.png",
+      "PropertyInspectorPath": "property-inspector/claudecode.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.claudecode",
+      "States": [
+        { "Name": "Default", "Image": "resources/claudecode.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
+    },
+    {
+      "Name": "Claude (cycle)",
+      "Tooltip": "Scan all Claude Code sessions on one key; tap to cycle through them.",
+      "Icon": "resources/claudecycle.png",
+      "PropertyInspectorPath": "property-inspector/claudecycle.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.claudecycle",
+      "States": [
+        { "Name": "Default", "Image": "resources/claudecycle.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
     }
   ],
   "OS": [
