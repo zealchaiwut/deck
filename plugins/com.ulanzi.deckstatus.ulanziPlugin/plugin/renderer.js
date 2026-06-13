@@ -60,8 +60,9 @@ function valueFontSize(value) {
 // Deck sits at a slope -> the bottom of each tile is hidden. So the label (the
 // "second line") goes at the TOP, just under the accent bar, and the big value
 // stays at one fixed center position across every tile.
-const LABEL_Y = 46;   // top, under the accent bar
-const VALUE_Y = 128;  // constant middle baseline for all tiles
+const LABEL_Y = 46;    // top, under the accent bar
+const VALUE_Y = 128;   // constant middle baseline for all tiles
+const LABEL_SIZE = 24; // top line ("idle 3/3", "ready", ...)
 
 export function renderTile({ value, color, label }) {
   const a = accent(color);
@@ -72,7 +73,7 @@ export function renderTile({ value, color, label }) {
     `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="${BG}"/>`,
     // accent bar across the top
     `<rect x="0" y="0" width="${SIZE}" height="18" fill="${a}"/>`,
-    hasLabel ? textShadow(truncate(String(label), 18), SIZE / 2, LABEL_Y, 22, '600', '#cfcfd6') : '',
+    hasLabel ? textShadow(truncate(String(label), 18), SIZE / 2, LABEL_Y, LABEL_SIZE, '600', '#cfcfd6') : '',
     textShadow(String(value), SIZE / 2, VALUE_Y, fs, '700', TEXT),
   ].join('');
 
@@ -85,7 +86,7 @@ export function renderNeutral({ value = '—', label = '' } = {}) {
   const body = [
     `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="${BG}"/>`,
     `<rect x="0" y="0" width="${SIZE}" height="18" fill="${COLORS.grey}"/>`,
-    hasLabel ? text(truncate(String(label), 18), SIZE / 2, LABEL_Y, 22, '600', DIM_TEXT) : '',
+    hasLabel ? text(truncate(String(label), 18), SIZE / 2, LABEL_Y, LABEL_SIZE, '600', DIM_TEXT) : '',
     textShadow(String(value), SIZE / 2, VALUE_Y, valueFontSize(value), '700', DIM_TEXT),
   ].join('');
   return toDataUrl(svgDoc(body));
