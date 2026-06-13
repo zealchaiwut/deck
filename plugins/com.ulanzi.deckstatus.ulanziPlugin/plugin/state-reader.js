@@ -169,8 +169,10 @@ const SESSION_REAP_SEC = 6 * 60 * 60; // beyond this, delete the file entirely
 // Full per-session list (newest first). Each: {id,state,cwd,label,ageSec,stale}.
 // stale = older than SESSION_FRESH_SEC (treat working/waiting as idle). Files
 // older than SESSION_REAP_SEC are deleted.
-export async function readClaudeSessionList(stateDir) {
-  const dir = path.join(stateDir, 'cc_sessions');
+// Generic over a sessions subdir so Claude (cc_sessions) and Cursor
+// (cursor_sessions) share the exact same logic.
+export async function readSessionList(stateDir, subdir = 'cc_sessions') {
+  const dir = path.join(stateDir, subdir);
   let files;
   try { files = await fs.readdir(dir); } catch { return []; }
   const now = Math.floor(Date.now() / 1000);
@@ -195,6 +197,8 @@ export async function readClaudeSessionList(stateDir) {
   list.sort((a, b) => a.ageSec - b.ageSec); // newest (smallest age) first
   return list;
 }
+
+export const readClaudeSessionList = (stateDir) => readSessionList(stateDir, 'cc_sessions');
 
 // Per-deck-key project/session map: deck_state/cc_keys.json = {"0_0":"coder",...}.
 // Lets you assign keys to sessions without the (flaky) Ulanzi config panel.
@@ -268,6 +272,40 @@ export async function readGithubRate() {
   const pct = Math.round((used / limit) * 100);
   const resetMins = Math.max(0, Math.ceil((core.reset - Date.now() / 1000) / 60));
   return { offline: false, used, limit, remaining: core.remaining ?? limit - used, pct, resetMins };
+}
+
+// --- Cursor live AI activity (ai-code-tracking.db) ---------------------------
+// Reads Cursor's AI-code tracking DB via the sqlite3 CLI (read-only). Counts
+// AI-accepted ('composer') snippets recently and today. createdAt is epoch ms.
+const CURSOR_AI_DB = path.join(os.homedir(), '.cursor/ai-tracking/ai-code-tracking.db');
+const CURSOR_RECENT_MS = 15 * 60 * 1000; // "generating now" window
+const SQLITE_CANDIDATES = ['sqlite3', '/usr/bin/sqlite3', '/opt/homebrew/bin/sqlite3'];
+
+async function sqlite(dbPath, query) {
+  for (const bin of SQLITE_CANDIDATES) {
+    try {
+      const { stdout } = await pexec(bin, ['-readonly', dbPath, query], { timeout: 4000, windowsHide: true });
+      return stdout;
+    } catch (e) {
+      if (e && e.code === 'ENOENT') continue;
+      return null; // locked / bad db
+    }
+  }
+  return null;
+}
+
+// Returns { offline, recent, today } — composer (AI) snippet counts.
+export async function readCursorAiActivity() {
+  const now = Date.now();
+  const recentFrom = now - CURSOR_RECENT_MS;
+  const midnight = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
+  const q =
+    `SELECT (SELECT COUNT(*) FROM ai_code_hashes WHERE source='composer' AND createdAt>=${recentFrom}),` +
+    `(SELECT COUNT(*) FROM ai_code_hashes WHERE source='composer' AND createdAt>=${midnight});`;
+  const out = await sqlite(CURSOR_AI_DB, q);
+  if (out == null) return { offline: true, recent: 0, today: 0 };
+  const [recent, today] = out.trim().split('|').map((n) => parseInt(n, 10) || 0);
+  return { offline: false, recent, today };
 }
 
 // Human "time since" — short and tile-friendly.

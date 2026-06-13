@@ -13,9 +13,9 @@ import UlanziApi from './plugin-common-node/index.js';
 import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
-  readClaudeSessionList, readKeyMap,
+  readClaudeSessionList, readSessionList, readKeyMap,
   readCommanderApi, readCommanderKeyMap, writeCommanderKey,
-  readSprintStatus, readCommanderAgents, readGithubRate,
+  readSprintStatus, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
 import { appendFileSync, watch, existsSync } from 'fs';
@@ -31,12 +31,15 @@ const ACTION_CLAUDECYCLE = 'com.ulanzi.ulanzistudio.deckstatus.claudecycle';
 const ACTION_SPRINT = 'com.ulanzi.ulanzistudio.deckstatus.sprint';
 const ACTION_CMDAGENTS = 'com.ulanzi.ulanzistudio.deckstatus.cmdagents';
 const ACTION_GHRATE = 'com.ulanzi.ulanzistudio.deckstatus.ghrate';
+const ACTION_CURSORCYCLE = 'com.ulanzi.ulanzistudio.deckstatus.cursorcycle';
+const ACTION_CURSORAI = 'com.ulanzi.ulanzistudio.deckstatus.cursorai';
 
 const FILE_POLL_MS = 2000;      // deck_state files change often
 const COMMIT_POLL_MS = 30000;   // git age only needs ~minute resolution
 const SESSION_POLL_MS = 1500;   // Claude Code status should feel responsive
 const COMMANDER_POLL_MS = 4000; // dashboard API; don't hammer it
 const GHRATE_POLL_MS = 60000;   // rate limit is a slow gauge (hourly window)
+const CURSOR_AI_POLL_MS = 30000; // AI-code DB; slow gauge
 
 const COMMANDER_ACTIONS = new Set([ACTION_SPRINT, ACTION_CMDAGENTS]);
 
@@ -153,17 +156,28 @@ async function claudeMappedIcon(inst) {
   return renderTile({ value: filter, color: look.color, label: look.word });
 }
 
-// Cycling tile: one key scans all sessions; tap advances. Zero config.
-async function claudeCycleIcon(inst) {
-  const list = await readClaudeSessionList(inst.stateDir);
+// Cycling tile: one key scans all sessions in a subdir; tap advances. Zero config.
+// Shared by Claude (cc_sessions) and Cursor (cursor_sessions).
+async function sessionCycleIcon(inst, subdir, emptyLabel) {
+  const list = await readSessionList(inst.stateDir, subdir);
   inst.cycleList = list; // for onRun bounds
-  if (!list.length) return renderNeutral({ value: '—', label: 'no claude' });
+  if (!list.length) return renderNeutral({ value: '—', label: emptyLabel });
   const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
   const sess = list[idx];
   const look = sessionLook(sess);
   const pos = list.length > 1 ? ` ${idx + 1}/${list.length}` : '';
-  dbg(`render claudecycle ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${look.word}`);
+  dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${look.word}`);
   return renderTile({ value: sess.label, color: look.color, label: look.word + pos });
+}
+
+// --- Cursor: live AI activity from the tracking DB ---------------------------
+async function cursorAiIcon() {
+  const a = await readCursorAiActivity();
+  if (a.offline) return renderNeutral({ value: '—', label: 'cursor?' });
+  const color = a.recent > 0 ? 'blue' : 'grey';
+  const label = a.recent > 0 ? `+${a.recent} now` : 'today';
+  dbg(`render cursorai recent=${a.recent} today=${a.today}`);
+  return renderTile({ value: String(a.today), color, label });
 }
 
 // Per-key dashboard URL: PI setting -> commander_keys.json[keyId] ->
@@ -223,10 +237,12 @@ async function ghRateIcon() {
 
 async function computeIcon(inst) {
   if (inst.type === ACTION_GHRATE) return ghRateIcon();
+  if (inst.type === ACTION_CURSORAI) return cursorAiIcon();
+  if (inst.type === ACTION_CURSORCYCLE) return sessionCycleIcon(inst, 'cursor_sessions', 'no cursor');
   if (inst.type === ACTION_SPRINT) return sprintIcon(inst);
   if (inst.type === ACTION_CMDAGENTS) return cmdAgentsIcon(inst);
   if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
-  if (inst.type === ACTION_CLAUDECYCLE) return claudeCycleIcon(inst);
+  if (inst.type === ACTION_CLAUDECYCLE) return sessionCycleIcon(inst, 'cc_sessions', 'no claude');
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.resolvedProject = await resolveProject(inst);
     inst.lastRead = await readProjectCommit(inst.resolvedProject);
@@ -304,6 +320,10 @@ function applySettings(inst, settings) {
     inst.intervalMs = GHRATE_POLL_MS; // zero-config; gh handles auth
     return;
   }
+  if (inst.type === ACTION_CURSORAI) {
+    inst.intervalMs = CURSOR_AI_POLL_MS; // zero-config; reads the tracking DB
+    return;
+  }
   if (COMMANDER_ACTIONS.has(inst.type)) {
     inst.intervalMs = COMMANDER_POLL_MS;
     inst.stateDir = resolveStateDir(settings);
@@ -319,9 +339,9 @@ function applySettings(inst, settings) {
     }
     return; // base resolved per render via resolveCommanderBase
   }
-  if (inst.type === ACTION_CLAUDECODE || inst.type === ACTION_CLAUDECYCLE) {
+  if (inst.type === ACTION_CLAUDECODE || inst.type === ACTION_CLAUDECYCLE || inst.type === ACTION_CURSORCYCLE) {
     inst.intervalMs = SESSION_POLL_MS;
-    inst.stateDir = resolveStateDir(settings);          // where cc_sessions/ lives
+    inst.stateDir = resolveStateDir(settings);          // where cc_sessions/ / cursor_sessions/ live
     inst.keyId = ($UD.decodeContext(inst.context) || {}).key || '?'; // for cc_keys.json
     if ('filter' in settings) inst.filter = String(settings.filter || '').trim(); // optional PI override
     return;
@@ -410,7 +430,7 @@ $UD.onRun(async (msg) => {
     const n = (inst.cycleList || []).length || 1;
     inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next agent
     log(`tap cmdagents -> idx ${inst.cycleIdx}/${n}`);
-  } else if (inst.type === ACTION_CLAUDECYCLE) {
+  } else if (inst.type === ACTION_CLAUDECYCLE || inst.type === ACTION_CURSORCYCLE) {
     const n = (inst.cycleList || []).length || 1;
     inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next session
     log(`tap cycle -> idx ${inst.cycleIdx}/${n}`);
