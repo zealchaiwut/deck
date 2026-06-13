@@ -109,16 +109,36 @@ async function fetchJson(url) {
   }
 }
 
-// /api/sprint-status -> { offline, running: [{label,closed,total,wallSecs}] }
+// /api/sprint-status -> { offline, running: [{label,closed,total,wallSecs}] }.
+// sprint-status reports progress {0,0} for in-flight sprints, so when total is 0
+// we derive real closed/total from the issues carrying the sprint's exact label
+// (the int `?sprint=` filter misses sub-sprints like "sprint-66.4").
+const DONE_COL = /done|merged|approved|uat|complete|closed/i;
 export async function readSprintStatus(base) {
   const d = await fetchJson(`${base}/api/sprint-status`);
   if (!d) return { offline: true, running: [] };
   const running = (d.running_sprints || []).map((s) => ({
     label: String(s.sprint_label || '').replace(/^sprint-/, ''),
+    fullLabel: String(s.sprint_label || ''),
     closed: s.progress?.closed ?? 0,
     total: s.progress?.total ?? 0,
     wallSecs: s.wall_clock_secs || 0,
   }));
+
+  if (running.some((s) => !s.total)) {
+    const issues = await fetchJson(`${base}/api/issues`);
+    if (Array.isArray(issues)) {
+      for (const s of running) {
+        if (s.total) continue;
+        const rows = issues.filter((i) =>
+          (i.labels || []).some((l) => ((l && l.name) || l) === s.fullLabel));
+        if (rows.length) {
+          s.total = rows.length;
+          s.closed = rows.filter((i) => i.state === 'closed' || DONE_COL.test(i.column || '')).length;
+        }
+      }
+    }
+  }
   return { offline: false, running };
 }
 
