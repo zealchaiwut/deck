@@ -237,6 +237,39 @@ export async function readClaudeSessions(stateDir) {
   return out;
 }
 
+// --- GitHub API rate-limit usage ---------------------------------------------
+// Uses the gh CLI (handles auth via keychain). The host runs with a stripped
+// PATH, so try `gh` then common Homebrew/local locations. /rate_limit does NOT
+// count against the limit, so polling is free.
+const GH_CANDIDATES = ['gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh'];
+
+async function ghApi(endpoint) {
+  for (const bin of GH_CANDIDATES) {
+    try {
+      const { stdout } = await pexec(bin, ['api', endpoint], { timeout: 5000, windowsHide: true });
+      return stdout;
+    } catch (e) {
+      if (e && e.code === 'ENOENT') continue; // not at this path, try next
+      return null;                            // found but failed (auth/network)
+    }
+  }
+  return null; // gh not found anywhere
+}
+
+// Returns { offline, used, limit, remaining, pct, resetMins } for the REST core.
+export async function readGithubRate() {
+  const out = await ghApi('/rate_limit');
+  if (!out) return { offline: true };
+  let core;
+  try { core = JSON.parse(out).resources?.core; } catch { return { offline: true }; }
+  if (!core) return { offline: true };
+  const limit = core.limit || 1;
+  const used = core.used != null ? core.used : limit - (core.remaining || 0);
+  const pct = Math.round((used / limit) * 100);
+  const resetMins = Math.max(0, Math.ceil((core.reset - Date.now() / 1000) / 60));
+  return { offline: false, used, limit, remaining: core.remaining ?? limit - used, pct, resetMins };
+}
+
 // Human "time since" — short and tile-friendly.
 export function formatAge(sec) {
   const s = Math.max(0, Math.floor(sec));
