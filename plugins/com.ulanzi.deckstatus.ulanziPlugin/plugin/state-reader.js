@@ -66,6 +66,47 @@ export async function writeProjectConfig(stateDir, projectPath) {
 const SESSION_FRESH_SEC = 20 * 60;   // beyond this, a working/waiting entry is treated as dead
 const SESSION_REAP_SEC = 6 * 60 * 60; // beyond this, delete the file entirely
 
+// Full per-session list (newest first). Each: {id,state,cwd,label,ageSec,stale}.
+// stale = older than SESSION_FRESH_SEC (treat working/waiting as idle). Files
+// older than SESSION_REAP_SEC are deleted.
+export async function readClaudeSessionList(stateDir) {
+  const dir = path.join(stateDir, 'cc_sessions');
+  let files;
+  try { files = await fs.readdir(dir); } catch { return []; }
+  const now = Math.floor(Date.now() / 1000);
+  const list = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    const full = path.join(dir, f);
+    let obj;
+    try { obj = JSON.parse(await fs.readFile(full, 'utf8')); } catch { continue; }
+    const ts = Number(obj.ts) || 0;
+    const age = now - ts;
+    if (age > SESSION_REAP_SEC) { fs.unlink(full).catch(() => {}); continue; }
+    list.push({
+      id: f.replace(/\.json$/, ''),
+      state: String(obj.state || ''),
+      cwd: String(obj.cwd || ''),
+      label: String(obj.label || ''),
+      ageSec: age,
+      stale: age > SESSION_FRESH_SEC,
+    });
+  }
+  list.sort((a, b) => a.ageSec - b.ageSec); // newest (smallest age) first
+  return list;
+}
+
+// Per-deck-key project/session map: deck_state/cc_keys.json = {"0_0":"coder",...}.
+// Lets you assign keys to sessions without the (flaky) Ulanzi config panel.
+export async function readKeyMap(stateDir) {
+  try {
+    const obj = JSON.parse(await fs.readFile(path.join(stateDir, 'cc_keys.json'), 'utf8'));
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function readClaudeSessions(stateDir) {
   const out = { working: 0, waiting: 0, total: 0, waitingLabel: '', workingLabel: '' };
   const dir = path.join(stateDir, 'cc_sessions');

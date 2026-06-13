@@ -38,7 +38,10 @@ STATE="${1:-working}"
   SID="$(extract session_id)"
   [ -z "$SID" ] && SID="unknown"
   CWD="$(extract cwd)"
-  LABEL="$(basename "$CWD" 2>/dev/null)"
+  # Identity: a custom DECK_SESSION (export before launching `claude`) wins, so
+  # two sessions in the SAME repo (e.g. commander coder vs tester) stay distinct;
+  # otherwise fall back to the repo folder name.
+  LABEL="${DECK_SESSION:-$(basename "$CWD" 2>/dev/null)}"
   TS="$(date +%s)"
 
   FILE="$SESS_DIR/$SID.json"

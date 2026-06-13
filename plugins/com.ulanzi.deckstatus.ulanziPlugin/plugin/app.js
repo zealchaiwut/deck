@@ -12,7 +12,8 @@
 import UlanziApi from './plugin-common-node/index.js';
 import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
-  readProjectConfig, writeProjectConfig, DEFAULT_PROJECT, readClaudeSessions,
+  readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
+  readClaudeSessionList, readKeyMap,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
 import { appendFileSync, watch, existsSync } from 'fs';
@@ -24,6 +25,7 @@ import { expandPath } from './state-reader.js';
 const PLUGIN_UUID = 'com.ulanzi.ulanzistudio.deckstatus';
 const ACTION_ANTIGRAVITY = 'com.ulanzi.ulanzistudio.deckstatus.antigravity';
 const ACTION_CLAUDECODE = 'com.ulanzi.ulanzistudio.deckstatus.claudecode';
+const ACTION_CLAUDECYCLE = 'com.ulanzi.ulanzistudio.deckstatus.claudecycle';
 
 const FILE_POLL_MS = 2000;     // deck_state files change often
 const COMMIT_POLL_MS = 30000;  // git age only needs ~minute resolution
@@ -103,25 +105,61 @@ async function resolveProject(inst) {
   return DEFAULT_PROJECT;
 }
 
-// --- Claude Code: aggregate all sessions into one light ----------------------
-function claudeIcon(s) {
-  if (s.working > 0) {
-    const label = s.working === 1 && s.workingLabel ? s.workingLabel : 'working';
-    return renderTile({ value: String(s.working), color: 'blue', label });
+// --- Claude Code session helpers ---------------------------------------------
+// Effective state of a session -> { color, word }. Stale sessions read as idle.
+function sessionLook(sess) {
+  if (!sess) return { color: 'grey', word: 'none' };
+  if (sess.stale) return { color: 'grey', word: 'idle' };
+  if (sess.state === 'working') return { color: 'blue', word: 'working' };
+  if (sess.state === 'waiting') return { color: 'amber', word: 'needs you' };
+  if (sess.state === 'done') return { color: 'green', word: 'ready' }; // done = pending next task
+  return { color: 'grey', word: 'idle' };
+}
+
+function matchesFilter(sess, filter) {
+  const f = filter.toLowerCase();
+  return sess.label.toLowerCase().includes(f) || sess.cwd.toLowerCase().includes(f);
+}
+
+// Among matches, surface the most "active" one: working > waiting > done > idle.
+function pickSession(list, filter) {
+  const m = list.filter((s) => matchesFilter(s, filter));
+  if (!m.length) return null;
+  const rank = (s) => (s.stale ? 0 : s.state === 'working' ? 3 : s.state === 'waiting' ? 2 : s.state === 'done' ? 1 : 0);
+  return m.sort((a, b) => rank(b) - rank(a))[0];
+}
+
+// Per-key mapped tile: one deck key dedicated to one session/project.
+async function claudeMappedIcon(inst) {
+  const list = await readClaudeSessionList(inst.stateDir);
+  const keyMap = await readKeyMap(inst.stateDir);
+  const filter = (keyMap[inst.keyId] || inst.filter || '').trim();
+  dbg(`render claudecode ctx=${inst.context} key=${inst.keyId} filter="${filter}" sessions=${list.length}`);
+  if (!filter) {
+    // Unmapped: show this key's id so you can add it to cc_keys.json.
+    return renderNeutral({ value: 'CC', label: `map ${inst.keyId}` });
   }
-  if (s.waiting > 0) {
-    const label = s.waiting === 1 && s.waitingLabel ? s.waitingLabel : 'needs you';
-    return renderTile({ value: String(s.waiting), color: 'amber', label });
-  }
-  return renderTile({ value: '✓', color: 'green', label: 'idle' }); // all clear
+  const sess = pickSession(list, filter);
+  const look = sessionLook(sess);
+  return renderTile({ value: filter, color: look.color, label: look.word });
+}
+
+// Cycling tile: one key scans all sessions; tap advances. Zero config.
+async function claudeCycleIcon(inst) {
+  const list = await readClaudeSessionList(inst.stateDir);
+  inst.cycleList = list; // for onRun bounds
+  if (!list.length) return renderNeutral({ value: '—', label: 'no claude' });
+  const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
+  const sess = list[idx];
+  const look = sessionLook(sess);
+  const pos = list.length > 1 ? ` ${idx + 1}/${list.length}` : '';
+  dbg(`render claudecycle ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${look.word}`);
+  return renderTile({ value: sess.label, color: look.color, label: look.word + pos });
 }
 
 async function computeIcon(inst) {
-  if (inst.type === ACTION_CLAUDECODE) {
-    const s = await readClaudeSessions(inst.stateDir);
-    dbg(`render claudecode ctx=${inst.context} ${JSON.stringify(s)}`);
-    return claudeIcon(s);
-  }
+  if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
+  if (inst.type === ACTION_CLAUDECYCLE) return claudeCycleIcon(inst);
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.resolvedProject = await resolveProject(inst);
     inst.lastRead = await readProjectCommit(inst.resolvedProject);
@@ -195,9 +233,11 @@ function stopPolling(inst) {
 // carries that key, so an empty onAdd delivery can't wipe a path we already have.
 function applySettings(inst, settings) {
   settings = settings || {};
-  if (inst.type === ACTION_CLAUDECODE) {
+  if (inst.type === ACTION_CLAUDECODE || inst.type === ACTION_CLAUDECYCLE) {
     inst.intervalMs = SESSION_POLL_MS;
-    inst.stateDir = resolveStateDir(settings); // where cc_sessions/ lives
+    inst.stateDir = resolveStateDir(settings);          // where cc_sessions/ lives
+    inst.keyId = ($UD.decodeContext(inst.context) || {}).key || '?'; // for cc_keys.json
+    if ('filter' in settings) inst.filter = String(settings.filter || '').trim(); // optional PI override
     return;
   }
   if (inst.type === ACTION_ANTIGRAVITY) {
@@ -276,7 +316,13 @@ $UD.onDidReceiveSettings((msg) => {
 //   Status Tile   -> reset an antigravity-counter file if bound to one, else refresh.
 $UD.onRun(async (msg) => {
   const inst = INSTANCES.get(msg.context) || ensureInstance(msg.context, settingsOf(msg));
-  if (inst.type === ACTION_ANTIGRAVITY) {
+  if (inst.type === ACTION_CLAUDECYCLE) {
+    const n = (inst.cycleList || []).length || 1;
+    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next session
+    log(`tap cycle -> idx ${inst.cycleIdx}/${n}`);
+  } else if (inst.type === ACTION_CLAUDECODE) {
+    log(`tap claudecode key=${inst.keyId} -> refresh`);
+  } else if (inst.type === ACTION_ANTIGRAVITY) {
     log(`tap -> open Antigravity IDE (project=${inst.resolvedProject || '?'})`);
     // Antigravity IDE bundle id; fall back to the app name if the id ever changes.
     execFile('open', ['-b', 'com.google.antigravity-ide'], (err) => {
