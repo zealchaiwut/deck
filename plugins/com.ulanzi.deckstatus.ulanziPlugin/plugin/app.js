@@ -219,9 +219,10 @@ async function sessionCycleIcon(inst, subdir, emptyLabel, glyph) {
   const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
   const sess = list[idx];
   const A = agentFor(sess);
-  const pos = list.length > 1 ? ` ${idx + 1}/${list.length}` : '';
+  const pos = list.length > 1 ? `${idx + 1}/${list.length}` : '';
   dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${A.word}`);
-  return renderStyle('agent', { accent: A.accent, glyph, value: sess.label, label: A.word + pos, state: A.state });
+  // Middle = status word + position (e.g. "needs you" / "1/4"); session name is the top title.
+  return renderStyle('agent', { accent: A.accent, glyph, value: A.word, sub: pos, label: sess.label, state: A.state });
 }
 
 // --- Cursor: live AI activity from the tracking DB ---------------------------

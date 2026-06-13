@@ -71,8 +71,17 @@ function fitSize(s) {
   return 30;
 }
 
+// Size for a single centered word/phrase.
+function wordSize(s) {
+  const n = String(s).length;
+  if (n <= 4) return 60;
+  if (n <= 8) return 42;
+  return 32;
+}
+
 // --- agent: radial glow; value in the MIDDLE, glyph (logo) TOP-RIGHT, title top
-function renderAgent({ accent, glyph: gname, label, state, count, value, pulse = 1 }) {
+// `sub` renders a second centered line below `value` (e.g. "needs you" / "1/4").
+function renderAgent({ accent, glyph: gname, label, state, count, value, sub, pulse = 1 }) {
   const a = hex(accent);
   let glyphColor = a, glyphAlpha = 1, showGlow = true;
   if (state === 'idle') { glyphAlpha = 0.32; showGlow = false; }
@@ -91,12 +100,17 @@ function renderAgent({ accent, glyph: gname, label, state, count, value, pulse =
       `<stop offset="62%" stop-color="${glowColor}" stop-opacity="0.05"/>` +
       `<stop offset="100%" stop-color="${glowColor}" stop-opacity="0"/></radialGradient>`
     : '';
+  const hasSub = sub != null && String(sub).trim() !== '';
+  const middle = hasSub
+    ? text(main, SIZE / 2, 110, wordSize(main), '700', mainColor) +      // line 1 (status word)
+      text(String(sub), SIZE / 2, 152, 34, '700', hex(accent))           // line 2 (e.g. "1/4")
+    : text(main, SIZE / 2, 122, fitSize(main), '700', mainColor);        // single big value
   const body = [
     bg(),
     showGlow ? `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" rx="34" fill="url(#glow)"/>` : '',
     topLabel(label, 16, 'start'),                          // title top-left
     glyph(gname || 'sparkles', SIZE - 34, 36, 44, glyphColor, glyphAlpha), // logo top-right
-    text(main, SIZE / 2, 122, fitSize(main), '700', mainColor),            // value middle
+    middle,
   ].join('');
   return toDataUrl(svgDoc(body, defs));
 }
