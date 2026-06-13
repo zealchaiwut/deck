@@ -55,55 +55,53 @@ function glyph(name, cx, cy, box, color, alpha = 1) {
   return `<g transform="translate(${tx.toFixed(2)} ${ty.toFixed(2)}) scale(${scale.toFixed(4)})" ${paint} opacity="${alpha}">${g.body}</g>`;
 }
 
-// Top-right count/check badge.
-function badge(content, color) {
-  const r = 17, cx = SIZE - 26, cy = 26;
-  const w = Math.max(34, 14 + String(content).length * 11);
-  const x = SIZE - 10 - w;
-  return (
-    `<rect x="${x}" y="9" width="${w}" height="34" rx="17" fill="${color}"/>` +
-    text(content, x + w / 2, 31, 18, '700', '#10110f')
-  );
-}
-function checkBadge(color) {
-  const cx = SIZE - 26, cy = 26;
-  return `<circle cx="${cx}" cy="${cy}" r="18" fill="${color}"/>` +
-    `<g transform="translate(${cx - 9} ${cy - 9}) scale(0.75)" fill="none" stroke="#10110f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${GLYPHS.check.body}</g>`;
-}
-function bottomLabel(label, mono = false) {
+// Title at the TOP (the deck slopes up, so the bottom edge is hidden).
+function topLabel(label, x = SIZE / 2, anchor = 'middle', mono = false) {
   if (!label) return '';
   const t = String(label).length > 16 ? String(label).slice(0, 15) + '…' : String(label);
-  return text(t, SIZE / 2, 180, 18, '600', DIM, 'middle', mono);
+  return text(t, x, 32, 18, '600', DIM, anchor, mono);
+}
+// Pick a font size so the centered value fits the tile width.
+function fitSize(s) {
+  const n = String(s).length;
+  if (n <= 2) return 90;
+  if (n === 3) return 74;
+  if (n <= 5) return 54;
+  if (n <= 8) return 38;
+  return 30;
 }
 
-// --- agent: radial glow + hero glyph + optional count/check + label ----------
-function renderAgent({ accent, glyph: gname, label, state, count, pulse = 1 }) {
+// --- agent: radial glow; value in the MIDDLE, glyph (logo) TOP-RIGHT, title top
+function renderAgent({ accent, glyph: gname, label, state, count, value, pulse = 1 }) {
   const a = hex(accent);
-  let glyphColor = a, glyphAlpha = 1, showGlow = true, topRight = '';
+  let glyphColor = a, glyphAlpha = 1, showGlow = true;
   if (state === 'idle') { glyphAlpha = 0.32; showGlow = false; }
   else if (state === 'error') { glyphColor = COLORS.red; }
+  else if (state === 'done') { glyphColor = COLORS.green; }
   else if (state === 'running') { glyphAlpha = 0.55 + 0.45 * pulse; }
-  if (state === 'done') topRight = checkBadge(COLORS.green);
-  else if (count != null && String(count).trim() !== '') topRight = badge(String(count), a);
 
+  const main = (count != null && String(count).trim() !== '') ? String(count)
+    : (value != null && String(value).trim() !== '') ? String(value)
+    : (state || '—');
+  const mainColor = state === 'error' ? COLORS.red : TEXT;
   const glowColor = state === 'error' ? COLORS.red : a;
   const defs = showGlow
-    ? `<radialGradient id="glow" cx="50%" cy="46%" r="62%">` +
-      `<stop offset="0%" stop-color="${glowColor}" stop-opacity="${(0.42 * (state === 'running' ? (0.6 + 0.4 * pulse) : 1)).toFixed(3)}"/>` +
-      `<stop offset="60%" stop-color="${glowColor}" stop-opacity="0.06"/>` +
+    ? `<radialGradient id="glow" cx="50%" cy="50%" r="65%">` +
+      `<stop offset="0%" stop-color="${glowColor}" stop-opacity="${(0.34 * (state === 'running' ? (0.6 + 0.4 * pulse) : 1)).toFixed(3)}"/>` +
+      `<stop offset="62%" stop-color="${glowColor}" stop-opacity="0.05"/>` +
       `<stop offset="100%" stop-color="${glowColor}" stop-opacity="0"/></radialGradient>`
     : '';
   const body = [
     bg(),
     showGlow ? `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" rx="34" fill="url(#glow)"/>` : '',
-    glyph(gname || 'sparkles', SIZE / 2, 92, 84, glyphColor, glyphAlpha),
-    topRight,
-    bottomLabel(label),
+    topLabel(label, 16, 'start'),                          // title top-left
+    glyph(gname || 'sparkles', SIZE - 34, 36, 44, glyphColor, glyphAlpha), // logo top-right
+    text(main, SIZE / 2, 122, fitSize(main), '700', mainColor),            // value middle
   ].join('');
   return toDataUrl(svgDoc(body, defs));
 }
 
-// --- gauge: glyph + big % + bottom meter bar ---------------------------------
+// --- gauge: glyph + big % + meter bar (kept high for the slope) --------------
 function gaugeColor(pct, override) {
   if (override) return hex(override);
   if (pct > 50) return COLORS.green;
@@ -116,11 +114,11 @@ function renderGauge({ accent, glyph: gname, value, color, label }) {
   const barW = Math.round((SIZE - 28) * (pct / 100));
   const body = [
     bg(),
-    glyph(gname || 'activity', SIZE / 2, 58, 44, hex(accent), 0.9),
-    text(`${pct}%`, SIZE / 2, 132, 54, '700', TEXT),
-    `<rect x="14" y="160" width="${SIZE - 28}" height="10" rx="5" fill="${TRACK}"/>`,
-    `<rect x="14" y="160" width="${barW}" height="10" rx="5" fill="${a}"/>`,
-    label ? text(String(label), SIZE / 2, 186, 15, '600', DIM) : '',
+    topLabel(label),
+    glyph(gname || 'activity', SIZE / 2, 70, 38, hex(accent), 0.9),
+    text(`${pct}%`, SIZE / 2, 128, 52, '700', TEXT),
+    `<rect x="14" y="146" width="${SIZE - 28}" height="10" rx="5" fill="${TRACK}"/>`,
+    `<rect x="14" y="146" width="${barW}" height="10" rx="5" fill="${a}"/>`,
   ].join('');
   return toDataUrl(svgDoc(body));
 }
@@ -129,52 +127,53 @@ function renderGauge({ accent, glyph: gname, value, color, label }) {
 function renderRing({ accent, done, total, value, label }) {
   const a = hex(accent);
   let pct, center;
-  if (total != null && Number(total) > 0) {
-    pct = Math.max(0, Math.min(1, Number(done || 0) / Number(total)));
-    center = `${done || 0}/${total}`;
+  if (total != null && Number.isFinite(Number(total))) {
+    const t = Number(total);
+    pct = t > 0 ? Math.max(0, Math.min(1, Number(done || 0) / t)) : 0;
+    center = `${done || 0}/${t}`;
   } else {
     pct = Math.max(0, Math.min(100, parseInt(String(value), 10) || 0)) / 100;
     center = `${Math.round(pct * 100)}%`;
   }
-  const cx = SIZE / 2, cy = 88, r = 58, C = 2 * Math.PI * r;
+  const cx = SIZE / 2, cy = 100, r = 56, C = 2 * Math.PI * r;
   const dash = (pct * C).toFixed(2);
   const body = [
     bg(),
+    topLabel(label),
     `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${TRACK}" stroke-width="14"/>`,
     `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${a}" stroke-width="14" stroke-linecap="round" ` +
       `stroke-dasharray="${dash} ${(C - pct * C).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`,
     text(center, cx, cy + 12, 38, '700', TEXT),
-    bottomLabel(label),
   ].join('');
   return toDataUrl(svgDoc(body));
 }
 
-// --- timestat: glyph + big short value + state label -------------------------
+// --- timestat: glyph + big short value + title (top) -------------------------
 const STATE_COLOR = { running: COLORS.blue, done: COLORS.green, error: COLORS.red, idle: DIM };
 function renderTimestat({ accent, glyph: gname, value, state, label }) {
   const a = state && STATE_COLOR[state] ? STATE_COLOR[state] : hex(accent);
   const body = [
     bg(),
-    glyph(gname || 'player-play-filled', SIZE / 2, 56, 40, a, 0.95),
-    text(String(value || '—'), SIZE / 2, 128, 52, '700', TEXT),
-    text(String(label || state || ''), SIZE / 2, 168, 18, '600', DIM),
+    topLabel(label || state),
+    glyph(gname || 'player-play-filled', SIZE / 2, 72, 40, a, 0.95),
+    text(String(value || '—'), SIZE / 2, 134, fitSize(value || '—'), '700', TEXT),
   ].join('');
   return toDataUrl(svgDoc(body));
 }
 
-// --- repo: quiet/dim grey glyph + mono label ---------------------------------
+// --- repo: quiet/dim grey glyph + mono title (top) ---------------------------
 function renderRepo({ glyph: gname, label }) {
   const body = [
     bg(),
-    glyph(gname || 'git-branch', SIZE / 2, 84, 64, DIM, 0.5),
-    label ? text(String(label), SIZE / 2, 168, 16, '600', DIM, 'middle', true) : '',
+    topLabel(label, SIZE / 2, 'middle', true),
+    glyph(gname || 'git-branch', SIZE / 2, 100, 64, DIM, 0.5),
   ].join('');
   return toDataUrl(svgDoc(body));
 }
 
 // Dim neutral fallback (missing/locked source).
 export function renderMissing(label) {
-  const body = [bg(), text('—', SIZE / 2, 110, 72, '700', DIM), label ? bottomLabel(label) : ''].join('');
+  const body = [bg(), topLabel(label), text('—', SIZE / 2, 122, 72, '700', DIM)].join('');
   return toDataUrl(svgDoc(body));
 }
 

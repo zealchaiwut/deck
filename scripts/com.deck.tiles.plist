@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Optional: refreshes the styled tile_*.json every 5s so Status Tiles show
+     live data. Activate it yourself (you own this persistence):
+       cp scripts/com.deck.tiles.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/com.deck.tiles.plist
+     Stop/remove:
+       launchctl unload -w ~/Library/LaunchAgents/com.deck.tiles.plist
+       rm ~/Library/LaunchAgents/com.deck.tiles.plist
+     (Not needed if you only use the dedicated actions — those self-update.) -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deck.tiles</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/chaiwutchaianuchittrakul/dev/deck/scripts/update-tiles.sh</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>5</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/chaiwutchaianuchittrakul/dev/deck/scripts/deck_state/_update-tiles.log</string>
+</dict>
+</plist>
