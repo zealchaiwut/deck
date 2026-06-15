@@ -17,7 +17,6 @@ import {
   readCommanderApi, readCommanderKeyEntry, writeCommanderKey, writeCommanderProjectRepo,
   readCommanderProjects, readSprintProgress, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
-import { renderTile, renderNeutral } from './renderer.js';
 import { render as renderStyle, renderMissing } from './render.js';
 import { appendFileSync, watch, existsSync } from 'fs';
 import { execFile } from 'child_process';
@@ -318,10 +317,17 @@ async function cmdAgentsIcon(inst) {
 // --- GitHub: REST API rate-limit usage % -------------------------------------
 async function ghRateIcon() {
   const r = await readGithubRate();
-  if (r.offline) return renderNeutral({ value: '—', label: 'gh?' });
+  if (r.offline) return renderMissing('gh?');
   const color = r.pct >= 85 ? 'red' : r.pct >= 60 ? 'amber' : 'green';
   dbg(`render ghrate ${r.used}/${r.limit} ${r.pct}% reset=${r.resetMins}m`);
-  return renderTile({ value: `${r.pct}%`, color, label: `rst ${r.resetMins}m` });
+  return renderStyle('gauge', {
+    glyph: 'brand-github',
+    accent: color,
+    value: r.pct,
+    color,
+    label: `rst ${r.resetMins}m`,
+    emphasis: true,
+  });
 }
 
 async function computeIcon(inst) {

@@ -133,15 +133,22 @@ function gaugeColor(pct, override) {
   if (pct >= 20) return COLORS.amber;
   return COLORS.red;
 }
-function renderGauge({ accent, glyph: gname, value, color, label }) {
+function renderGauge({ accent, glyph: gname, value, color, label, emphasis }) {
   const pct = Math.max(0, Math.min(100, parseInt(String(value), 10) || 0));
   const a = gaugeColor(pct, color);
   const barW = Math.round((SIZE - 28) * (pct / 100));
+  const valueStr = `${pct}%`;
+  const glyphEl = emphasis
+    ? glyph(gname || 'brand-github', SIZE - 34, 36, 48, a, 1)
+    : glyph(gname || 'activity', SIZE / 2, 70, 38, hex(accent), 0.9);
+  const valueEl = emphasis
+    ? text(valueStr, SIZE / 2, 128, fitSize(valueStr), '700', TEXT)
+    : text(valueStr, SIZE / 2, 128, 52, '700', TEXT);
   const body = [
     bg(),
     topLabel(label),
-    glyph(gname || 'activity', SIZE / 2, 70, 38, hex(accent), 0.9),
-    text(`${pct}%`, SIZE / 2, 128, 52, '700', TEXT),
+    glyphEl,
+    valueEl,
     `<rect x="14" y="146" width="${SIZE - 28}" height="10" rx="5" fill="${TRACK}"/>`,
     `<rect x="14" y="146" width="${barW}" height="10" rx="5" fill="${a}"/>`,
   ].join('');
