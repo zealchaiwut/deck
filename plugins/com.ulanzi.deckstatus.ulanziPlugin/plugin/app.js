@@ -14,11 +14,13 @@ import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
   readClaudeSessionList, readSessionList, readKeyMap,
-  readActiveSessionList, sessionDurationText, sessionTitle,
+  readActiveSessionList, sessionDurationText,
+  sessionRole, sessionDisplayProject,
   readCommanderApi, readCommanderKeyEntry, writeCommanderKey, writeCommanderProjectRepo,
   readCommanderProjects, readSprintProgress, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
 import { render as renderStyle, renderMissing } from './render.js';
+import { renderTile, renderNeutral } from './renderer.js';
 import { appendFileSync, watch, existsSync } from 'fs';
 import { execFile } from 'child_process';
 import os from 'os';
@@ -180,21 +182,38 @@ function agentFor(sess) {
   if (sess.state === 'working') return { accent: 'blue', state: 'running', word: 'working' };
   if (sess.state === 'waiting') return { accent: 'amber', state: undefined, word: 'needs you' };
   if (sess.state === 'done') return { accent: 'green', state: 'done', word: 'ready' };
+  if (sess.state === 'idle' && sess.live) return { accent: 'blue', state: 'running', word: 'live' };
   if (sess.state === 'idle') return { accent: 'grey', state: 'idle', word: 'idle' };
   return { accent: 'grey', state: 'idle', word: 'idle' };
 }
 
-function renderSessionAgent(sess, { idx = 0, total = 1 } = {}) {
+// Slope-safe session tile: accent bar + duration (big) + status (top).
+// Host text overlay: line 1 = project (or "-"), line 2 = role.
+function renderSessionTile(sess, { idx = 0, total = 1 } = {}) {
   const A = agentFor(sess);
   const pos = total > 1 ? ` ${idx + 1}/${total}` : '';
-  return renderStyle('agent', {
-    accent: A.accent,
-    glyph: 'sparkles',
-    value: sessionDurationText(sess),
-    label: sessionTitle(sess) + pos,
-    sub: A.word,
-    state: A.state,
-  });
+  const project = sessionDisplayProject(sess);
+  const role = sessionRole(sess);
+  const dur = sessionDurationText(sess);
+  const top = `${A.word}${pos}`;
+  const text = `${project}\n${role}`;
+  return { icon: renderTile({ value: dur, color: A.accent, label: top }), text };
+}
+
+function tileMissing(label) {
+  const t = String(label || '—');
+  return { icon: renderNeutral({ value: '—', label: t }), text: t };
+}
+
+// One entry per cwd — drops duplicate zombie session files from the cycle list.
+function dedupeByCwd(list) {
+  const by = new Map();
+  for (const s of list) {
+    const k = s.cwd || s.label || s.id;
+    const prev = by.get(k);
+    if (!prev || s.ageSec < prev.ageSec) by.set(k, s);
+  }
+  return [...by.values()];
 }
 
 function matchesFilter(sess, filter) {
@@ -202,12 +221,19 @@ function matchesFilter(sess, filter) {
   return sess.label.toLowerCase().includes(f) || sess.cwd.toLowerCase().includes(f);
 }
 
-// Among matches, surface the most "active" one: working > waiting > done > idle.
+// Among matches, surface the most "active" one: working > waiting > live-idle > done > idle.
 function pickSession(list, filter) {
   const m = list.filter((s) => matchesFilter(s, filter));
   if (!m.length) return null;
-  const rank = (s) => (s.stale ? 0 : s.state === 'working' ? 3 : s.state === 'waiting' ? 2 : s.state === 'done' ? 1 : 0);
-  return m.sort((a, b) => rank(b) - rank(a))[0];
+  const rank = (s) => {
+    if (s.stale) return 0;
+    if (s.state === 'working') return 5;
+    if (s.state === 'waiting') return 4;
+    if (s.state === 'idle' && s.live) return 3;
+    if (s.state === 'done') return 2;
+    return 1;
+  };
+  return m.sort((a, b) => rank(b) - rank(a) || a.ageSec - b.ageSec)[0];
 }
 
 // Per-key mapped tile: one deck key dedicated to one session/project.
@@ -218,28 +244,28 @@ async function claudeMappedIcon(inst) {
   dbg(`render claudecode ctx=${inst.context} key=${inst.keyId} filter="${filter}" sessions=${list.length}`);
   if (!filter) {
     // Unmapped: show this key's id so you can add it to cc_keys.json.
-    return renderMissing(`map ${inst.keyId}`);
+    return tileMissing(`map ${inst.keyId}`);
   }
   const sess = pickSession(list, filter);
   if (!sess) {
-    return renderStyle('agent', {
-      accent: 'grey', glyph: 'sparkles', value: '—', label: filter, sub: 'idle', state: 'idle',
-    });
+    const t = `${filter}\n—\nidle`;
+    return { icon: renderNeutral({ value: '—', label: `${filter} · idle` }), text: t };
   }
-  return renderSessionAgent(sess);
+  return renderSessionTile(sess);
 }
 
 // Cycling tile: one key scans active sessions in a subdir; tap advances.
 async function sessionCycleIcon(inst, subdir, emptyLabel) {
-  const { list, anyFiles } = await readActiveSessionList(inst.stateDir, subdir);
+  const { list: raw, anyFiles } = await readActiveSessionList(inst.stateDir, subdir);
+  const list = dedupeByCwd(raw);
   inst.cycleList = list; // for onRun bounds
-  if (!list.length) return renderMissing(anyFiles ? 'no active' : emptyLabel);
+  if (!list.length) return tileMissing(anyFiles ? 'no active' : emptyLabel);
   const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
   const sess = list[idx];
   const A = agentFor(sess);
   managePulse(inst, A.state === 'running');
-  dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${A.word}`);
-  return renderSessionAgent(sess, { idx, total: list.length });
+  dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${A.word} dur=${sessionDurationText(sess)}`);
+  return renderSessionTile(sess, { idx, total: list.length });
 }
 
 // --- Cursor: unified tile (hook sessions + AI snippet fallback) --------------
@@ -254,7 +280,7 @@ function rankSession(s) {
 async function cursorIcon(inst) {
   const list = await readSessionList(inst.stateDir, 'cursor_sessions');
   const active = list.filter((s) => !s.stale);
-  const sorted = [...(active.length ? active : list)].sort(
+  const sorted = dedupeByCwd([...(active.length ? active : list)]).sort(
     (a, b) => rankSession(b) - rankSession(a) || a.ageSec - b.ageSec,
   );
   inst.cycleList = sorted;
@@ -265,9 +291,7 @@ async function cursorIcon(inst) {
     const A = agentFor(sess);
     managePulse(inst, A.state === 'running');
     dbg(`render cursor ctx=${inst.context} idx=${idx}/${sorted.length} label=${sess.label} ${A.word}`);
-    return renderStyle('agent', {
-      bg: A.accent, glyph: 'pointer', value: sess.label, label: A.word, state: A.state,
-    });
+    return renderSessionTile(sess, { idx, total: sorted.length });
   }
 
   managePulse(inst, false);
@@ -398,10 +422,14 @@ async function renderInstance(inst) {
   if (inst.inflight) return; // debounce: skip if a read is already running
   inst.inflight = true;
   try {
-    const dataUrl = await computeIcon(inst);
-    if (dataUrl !== inst.lastIcon) {
-      inst.lastIcon = dataUrl;
-      $UD.setBaseDataIcon(inst.context, dataUrl, '');
+    const out = await computeIcon(inst);
+    const icon = out && typeof out === 'object' && out.icon ? out.icon : out;
+    const text = out && typeof out === 'object' && out.text ? out.text : '';
+    const key = text ? `${icon}|${text}` : icon;
+    if (key !== inst.lastIcon) {
+      inst.lastIcon = key;
+      $UD.setBaseDataIcon(inst.context, icon, text);
+      dbg(`push ctx=${inst.context} text="${String(text).replace(/\n/g, ' / ')}"`);
     }
   } catch (e) {
     log(`render error for ${inst.context}: ${e?.message || e}`, 'error');
