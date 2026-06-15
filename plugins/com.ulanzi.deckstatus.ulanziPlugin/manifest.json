@@ -102,26 +102,13 @@
       "Devices": []
     },
     {
-      "Name": "Cursor (cycle)",
-      "Tooltip": "Scan Cursor sessions per workspace (working/idle/done); tap to cycle.",
+      "Name": "Cursor",
+      "Tooltip": "Cursor IDE: active workspace when busy (hooks), AI snippet count when idle. Tap to cycle sessions.",
       "Icon": "resources/cursorcycle.png",
       "PropertyInspectorPath": "property-inspector/cursor.html",
       "UUID": "com.ulanzi.ulanzistudio.deckstatus.cursorcycle",
       "States": [
         { "Name": "Default", "Image": "resources/cursorcycle.png" }
-      ],
-      "SupportedInMultiActions": false,
-      "Controllers": ["Keypad"],
-      "Devices": []
-    },
-    {
-      "Name": "Cursor AI",
-      "Tooltip": "Live Cursor AI activity: AI snippets today, blue when generating now.",
-      "Icon": "resources/cursorai.png",
-      "PropertyInspectorPath": "property-inspector/cursor.html",
-      "UUID": "com.ulanzi.ulanzistudio.deckstatus.cursorai",
-      "States": [
-        { "Name": "Default", "Image": "resources/cursorai.png" }
       ],
       "SupportedInMultiActions": false,
       "Controllers": ["Keypad"],

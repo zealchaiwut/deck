@@ -42,9 +42,9 @@ const COMMIT_POLL_MS = 30000;   // git age only needs ~minute resolution
 const SESSION_POLL_MS = 1500;   // Claude Code status should feel responsive
 const COMMANDER_POLL_MS = 4000; // dashboard API; don't hammer it
 const GHRATE_POLL_MS = 60000;   // rate limit is a slow gauge (hourly window)
-const CURSOR_AI_POLL_MS = 30000; // AI-code DB; slow gauge
 
 const COMMANDER_ACTIONS = new Set([ACTION_SPRINT, ACTION_CMDAGENTS]);
+const CURSOR_ACTIONS = new Set([ACTION_CURSORCYCLE, ACTION_CURSORAI]);
 
 const $UD = new UlanziApi();
 const INSTANCES = new Map(); // context -> instance
@@ -225,12 +225,40 @@ async function sessionCycleIcon(inst, subdir, emptyLabel) {
   return renderStyle('agent', { bg: A.accent, value: sess.label, state: A.state });
 }
 
-// --- Cursor: live AI activity from the tracking DB ---------------------------
-async function cursorAiIcon() {
+// --- Cursor: unified tile (hook sessions + AI snippet fallback) --------------
+function rankSession(s) {
+  if (s.stale) return 0;
+  if (s.state === 'working') return 4;
+  if (s.state === 'waiting') return 3;
+  if (s.state === 'done') return 2;
+  return 1;
+}
+
+async function cursorIcon(inst) {
+  const list = await readSessionList(inst.stateDir, 'cursor_sessions');
+  const active = list.filter((s) => !s.stale);
+  const sorted = [...(active.length ? active : list)].sort(
+    (a, b) => rankSession(b) - rankSession(a) || a.ageSec - b.ageSec,
+  );
+  inst.cycleList = sorted;
+
+  if (sorted.length) {
+    const idx = ((inst.cycleIdx || 0) % sorted.length + sorted.length) % sorted.length;
+    const sess = sorted[idx];
+    const A = agentFor(sess);
+    managePulse(inst, A.state === 'running');
+    dbg(`render cursor ctx=${inst.context} idx=${idx}/${sorted.length} label=${sess.label} ${A.word}`);
+    return renderStyle('agent', {
+      bg: A.accent, glyph: 'pointer', value: sess.label, label: A.word, state: A.state,
+    });
+  }
+
+  managePulse(inst, false);
   const a = await readCursorAiActivity();
   if (a.offline) return renderMissing('cursor?');
   const gen = a.recent > 0;
-  dbg(`render cursorai recent=${a.recent} today=${a.today}`);
+  managePulse(inst, gen);
+  dbg(`render cursor idle today=${a.today} recent=${a.recent}`);
   return renderStyle('agent', {
     accent: gen ? 'teal' : 'grey', glyph: 'pointer', value: String(a.today),
     label: gen ? `+${a.recent} now` : 'today', state: gen ? 'running' : 'idle',
@@ -326,8 +354,7 @@ async function ghRateIcon() {
 
 async function computeIcon(inst) {
   if (inst.type === ACTION_GHRATE) return ghRateIcon();
-  if (inst.type === ACTION_CURSORAI) return cursorAiIcon();
-  if (inst.type === ACTION_CURSORCYCLE) return sessionCycleIcon(inst, 'cursor_sessions', 'no cursor');
+  if (CURSOR_ACTIONS.has(inst.type)) return cursorIcon(inst);
   if (inst.type === ACTION_SPRINT) return sprintIcon(inst);
   if (inst.type === ACTION_CMDAGENTS) return cmdAgentsIcon(inst);
   if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
@@ -356,7 +383,8 @@ async function renderInstance(inst) {
   } finally {
     inst.inflight = false;
   }
-  ensureGitWatch(inst); // (re)arm the commit watcher now that the project is resolved
+  ensureGitWatch(inst);
+  ensureCursorWatch(inst);
 }
 
 // Watch the repo's reflog so a new commit (e.g. from the post-commit hook) forces
@@ -391,6 +419,33 @@ function closeWatch(inst) {
   inst.watchProject = '';
 }
 
+function ensureCursorWatch(inst) {
+  if (!CURSOR_ACTIONS.has(inst.type) || !inst.stateDir) return;
+  const dir = path.join(inst.stateDir, 'cursor_sessions');
+  if (inst.watchCursorDir === dir && inst.cursorWatcher) return;
+  closeCursorWatch(inst);
+  if (!existsSync(dir)) return;
+  try {
+    inst.cursorWatcher = watch(dir, () => {
+      if (inst.cursorWatchDebounce) clearTimeout(inst.cursorWatchDebounce);
+      inst.cursorWatchDebounce = setTimeout(() => {
+        inst.lastIcon = '';
+        renderInstance(inst);
+      }, 300);
+    });
+    inst.watchCursorDir = dir;
+    dbg(`watching ${dir}`);
+  } catch (e) {
+    dbg(`cursor watch failed for ${dir}: ${e.message}`);
+  }
+}
+
+function closeCursorWatch(inst) {
+  if (inst.cursorWatcher) { try { inst.cursorWatcher.close(); } catch {} inst.cursorWatcher = null; }
+  if (inst.cursorWatchDebounce) { clearTimeout(inst.cursorWatchDebounce); inst.cursorWatchDebounce = null; }
+  inst.watchCursorDir = '';
+}
+
 function startPolling(inst) {
   stopPolling(inst);
   inst.timer = setInterval(() => { renderInstance(inst); }, inst.intervalMs);
@@ -398,6 +453,7 @@ function startPolling(inst) {
 }
 function stopPolling(inst) {
   closeWatch(inst);
+  closeCursorWatch(inst);
   if (inst.pulseTimer) { clearInterval(inst.pulseTimer); inst.pulseTimer = null; }
   if (inst.timer) { clearInterval(inst.timer); inst.timer = null; }
 }
@@ -408,10 +464,6 @@ function applySettings(inst, settings) {
   settings = settings || {};
   if (inst.type === ACTION_GHRATE) {
     inst.intervalMs = GHRATE_POLL_MS; // zero-config; gh handles auth
-    return;
-  }
-  if (inst.type === ACTION_CURSORAI) {
-    inst.intervalMs = CURSOR_AI_POLL_MS; // zero-config; reads the tracking DB
     return;
   }
   if (COMMANDER_ACTIONS.has(inst.type)) {
@@ -429,7 +481,7 @@ function applySettings(inst, settings) {
     }
     return; // base resolved per render via resolveCommanderBase
   }
-  if (inst.type === ACTION_CLAUDECODE || inst.type === ACTION_CLAUDECYCLE || inst.type === ACTION_CURSORCYCLE) {
+  if (inst.type === ACTION_CLAUDECODE || inst.type === ACTION_CLAUDECYCLE || CURSOR_ACTIONS.has(inst.type)) {
     inst.intervalMs = SESSION_POLL_MS;
     inst.stateDir = resolveStateDir(settings);          // where cc_sessions/ / cursor_sessions/ live
     inst.keyId = ($UD.decodeContext(inst.context) || {}).key || '?'; // for cc_keys.json
@@ -536,7 +588,7 @@ $UD.onRun(async (msg) => {
     const n = (inst.cycleList || []).length || 1;
     inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next agent
     log(`tap cmdagents -> idx ${inst.cycleIdx}/${n}`);
-  } else if (inst.type === ACTION_CLAUDECYCLE || inst.type === ACTION_CURSORCYCLE) {
+  } else if (inst.type === ACTION_CLAUDECYCLE || CURSOR_ACTIONS.has(inst.type)) {
     const n = (inst.cycleList || []).length || 1;
     inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next session
     log(`tap cycle -> idx ${inst.cycleIdx}/${n}`);
