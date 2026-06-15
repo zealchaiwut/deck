@@ -64,7 +64,7 @@
     },
     {
       "Name": "Commander Sprint",
-      "Tooltip": "Running commander sprint progress (closed/total). Tap opens the dashboard.",
+      "Tooltip": "Commander sprint progress per project (done/total, nav-pill API). Tap cycles tracked project.",
       "Icon": "resources/sprint.png",
       "PropertyInspectorPath": "property-inspector/commander.html",
       "UUID": "com.ulanzi.ulanzistudio.deckstatus.sprint",

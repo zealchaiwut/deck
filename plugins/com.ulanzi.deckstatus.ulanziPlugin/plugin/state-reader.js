@@ -71,8 +71,9 @@ export async function readCommanderApi(stateDir) {
   }
 }
 
-// Per-deck-key dashboard URL map: deck_state/commander_keys.json
-//   { "0_0": "http://127.0.0.1:8001", "0_1": "http://192.168.1.50:8001" }
+// Per-deck-key dashboard config: deck_state/commander_keys.json
+//   { "0_0": "http://127.0.0.1:8001" }  — legacy URL string
+//   { "0_0": { "apiBase": "http://...", "projectRepo": "owner/repo" } }
 // Lets one key watch the local dashboard and another a REMOTE machine.
 export async function readCommanderKeyMap(stateDir) {
   try {
@@ -83,19 +84,58 @@ export async function readCommanderKeyMap(stateDir) {
   }
 }
 
-// Persist one key's URL (merge), so the Ulanzi PI edit sticks per-key.
-export async function writeCommanderKey(stateDir, keyId, base) {
-  const b = String(base || '').trim();
-  if (!keyId || !b) return false;
+function parseCommanderKeyEntry(entry) {
+  if (!entry) return { apiBase: '', projectRepo: '' };
+  if (typeof entry === 'string') return { apiBase: entry.trim(), projectRepo: '' };
+  if (typeof entry === 'object') {
+    return {
+      apiBase: String(entry.apiBase || '').trim(),
+      projectRepo: String(entry.projectRepo || '').trim(),
+    };
+  }
+  return { apiBase: '', projectRepo: '' };
+}
+
+export async function readCommanderKeyEntry(stateDir, keyId) {
+  const map = await readCommanderKeyMap(stateDir);
+  return parseCommanderKeyEntry(map[keyId]);
+}
+
+async function writeCommanderKeyEntry(stateDir, keyId, patch) {
+  if (!keyId) return false;
   try {
     await fs.mkdir(stateDir, { recursive: true });
     const map = await readCommanderKeyMap(stateDir);
-    map[keyId] = b;
+    const cur = parseCommanderKeyEntry(map[keyId]);
+    const next = {
+      apiBase: patch.apiBase != null ? String(patch.apiBase || '').trim() : cur.apiBase,
+      projectRepo: patch.projectRepo != null ? String(patch.projectRepo || '').trim() : cur.projectRepo,
+    };
+    if (!next.apiBase && !next.projectRepo) {
+      delete map[keyId];
+    } else if (next.apiBase && !next.projectRepo) {
+      map[keyId] = next.apiBase; // keep legacy string form when only URL is set
+    } else {
+      map[keyId] = next;
+    }
     await fs.writeFile(path.join(stateDir, 'commander_keys.json'), JSON.stringify(map, null, 2) + '\n', 'utf8');
     return true;
   } catch {
     return false;
   }
+}
+
+// Persist one key's URL (merge), so the Ulanzi PI edit sticks per-key.
+export async function writeCommanderKey(stateDir, keyId, base) {
+  const b = String(base || '').trim();
+  if (!keyId || !b) return false;
+  return writeCommanderKeyEntry(stateDir, keyId, { apiBase: b });
+}
+
+export async function writeCommanderProjectRepo(stateDir, keyId, projectRepo) {
+  const repo = String(projectRepo || '').trim();
+  if (!keyId || !repo) return false;
+  return writeCommanderKeyEntry(stateDir, keyId, { projectRepo: repo });
 }
 
 // GET JSON, best-effort. Returns null on any error / non-200 / timeout.
@@ -120,6 +160,37 @@ export async function readSprintStatus(base) {
     wallSecs: s.wall_clock_secs || 0,
   }));
   return { offline: false, running };
+}
+
+// /api/home -> project list for tap-to-cycle tracking (URL-only PI).
+export async function readCommanderProjects(base) {
+  const d = await fetchJson(`${base}/api/home`);
+  if (!d || !Array.isArray(d.projects)) return { offline: true, projects: [] };
+  const projects = d.projects
+    .map((p) => ({
+      name: String(p.name || ''),
+      slug: String(p.slug || ''),
+      repo: String(p.repo || ''),
+      status: String(p.status || 'idle'),
+    }))
+    .filter((p) => p.repo)
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+  return { offline: false, projects };
+}
+
+// /api/sprint-progress?repo= — same source of truth as the dashboard nav pill.
+export async function readSprintProgress(base, repo) {
+  const q = encodeURIComponent(String(repo || ''));
+  const d = await fetchJson(`${base}/api/sprint-progress?repo=${q}`);
+  if (!d) return { offline: true, hasSprint: false, done: 0, total: 0, sprint: 0, runState: '' };
+  return {
+    offline: false,
+    hasSprint: !!d.has_sprint,
+    sprint: d.sprint ?? 0,
+    done: d.done ?? 0,
+    total: d.total ?? 0,
+    runState: String(d.run_state || 'running'),
+  };
 }
 
 // /api/agents -> { offline, agents: [...] }. Commander agents that are CURRENTLY

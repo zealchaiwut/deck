@@ -81,7 +81,18 @@ function wordSize(s) {
 
 // --- agent: radial glow; value in the MIDDLE, glyph (logo) TOP-RIGHT, title top
 // `sub` renders a second centered line below `value` (e.g. "needs you" / "1/4").
-function renderAgent({ accent, glyph: gname, label, state, count, value, sub, pulse = 1 }) {
+function renderAgent({ accent, glyph: gname, label, state, count, value, sub, bg: bgColor, pulse = 1 }) {
+  // Solid status-color background variant: the whole tile is the status color
+  // and the centered text is the session name. Used by the session-cycle tile,
+  // where colour (grey idle / blue working / green ready) carries the status.
+  if (bgColor) {
+    const name = value != null && String(value).trim() !== '' ? String(value) : '—';
+    const body = [
+      `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" rx="34" fill="${hex(bgColor)}"/>`,
+      text(name, SIZE / 2, SIZE / 2 + 14, fitSize(name), '700', '#15161a'),
+    ].join('');
+    return toDataUrl(svgDoc(body));
+  }
   const a = hex(accent);
   let glyphColor = a, glyphAlpha = 1, showGlow = true;
   if (state === 'idle') { glyphAlpha = 0.32; showGlow = false; }
@@ -175,6 +186,23 @@ function renderTimestat({ accent, glyph: gname, value, state, label }) {
   return toDataUrl(svgDoc(body));
 }
 
+// --- fill: background fills bottom-up by pct (progress-bar-as-tile); centered
+// value + title on top. Used by the sprint tile — a full green tile == done.
+function renderFill({ accent, pct, value, label }) {
+  const a = hex(accent);
+  const p = Math.max(0, Math.min(1, Number(pct) || 0));
+  const fillH = Math.round(SIZE * p);
+  const y = SIZE - fillH;
+  const defs = `<clipPath id="rc"><rect x="0" y="0" width="${SIZE}" height="${SIZE}" rx="34"/></clipPath>`;
+  const body = [
+    bg(),                                                       // dark base track
+    `<g clip-path="url(#rc)"><rect x="0" y="${y}" width="${SIZE}" height="${fillH}" fill="${a}" fill-opacity="0.9"/></g>`,
+    topLabel(label),
+    text(String(value != null ? value : '—'), SIZE / 2, SIZE / 2 + 14, fitSize(value), '700', TEXT),
+  ].join('');
+  return toDataUrl(svgDoc(body, defs));
+}
+
 // --- repo: quiet/dim grey glyph + mono title (top) ---------------------------
 function renderRepo({ glyph: gname, label }) {
   const body = [
@@ -195,6 +223,7 @@ const RENDERERS = {
   agent: renderAgent,
   gauge: renderGauge,
   ring: renderRing,
+  fill: renderFill,
   timestat: renderTimestat,
   repo: renderRepo,
 };
