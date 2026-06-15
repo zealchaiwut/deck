@@ -14,18 +14,30 @@ w() { # w <name> <json>
 }
 
 # --- commander sprint -> ring (closed/total) --------------------------------
+# sprint-status reports 0/0 for running sprints, so derive closed/total from the
+# issues carrying the sprint's exact label (e.g. "sprint-66.5").
 {
   API="$(cat "$SD/commander_api.txt" 2>/dev/null || echo http://127.0.0.1:8001)"
-  sj="$(curl -s -m2 "$API/api/sprint-status" 2>/dev/null)"
+  sj="$(curl -s -m3 "$API/api/sprint-status" 2>/dev/null)"
+  ij="$(curl -s -m6 "$API/api/issues" 2>/dev/null)"  # GitHub-backed, can be slow
   if [ -n "$sj" ]; then
-    line="$(printf '%s' "$sj" | python3 -c 'import sys,json
+    line="$(SJ="$sj" IJ="$ij" python3 -c 'import os,json
 try:
- d=json.load(sys.stdin); r=(d.get("running_sprints") or [{}])[0]; p=r.get("progress") or {}
- print(p.get("closed",0), p.get("total",0), (r.get("sprint_label") or "").replace("sprint-",""))
-except: print(0,0,"")' 2>/dev/null)"
+ d=json.loads(os.environ["SJ"]); r=(d.get("running_sprints") or [{}])[0]
+ full=r.get("sprint_label") or ""; p=r.get("progress") or {}
+ closed=p.get("closed",0) or 0; total=p.get("total",0) or 0
+ if not total:
+  try:
+   iss=json.loads(os.environ.get("IJ") or "[]")
+   rows=[i for i in iss if any(((l.get("name") if isinstance(l,dict) else l)==full) for l in (i.get("labels") or []))]
+   done=("done","merged","approved","uat","complete","closed")
+   total=len(rows); closed=sum(1 for i in rows if i.get("state")=="closed" or (i.get("column") or "") in done)
+  except Exception: pass
+ print(closed, total, full.replace("sprint-",""))
+except Exception: print(0,0,"")' 2>/dev/null)"
     set -- $line; closed="${1:-0}"; total="${2:-0}"; label="${3:-}"
     st="running"; [ "$total" != "0" ] && [ "$closed" = "$total" ] && st="done"
-    w sprint "{\"count\":\"$closed/$total\",\"state\":\"$st\",\"label\":\"s$label\"}"
+    [ -n "$label" ] && w sprint "{\"count\":\"$closed/$total\",\"state\":\"$st\",\"label\":\"s$label\"}"
   fi
 } 2>/dev/null
 
