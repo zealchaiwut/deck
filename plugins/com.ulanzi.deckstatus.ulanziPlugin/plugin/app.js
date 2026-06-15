@@ -14,8 +14,8 @@ import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
   readClaudeSessionList, readSessionList, readKeyMap,
-  readCommanderApi, readCommanderKeyMap, writeCommanderKey,
-  readSprintStatus, readCommanderAgents, readGithubRate, readCursorAiActivity,
+  readCommanderApi, readCommanderKeyEntry, writeCommanderKey, writeCommanderProjectRepo,
+  readCommanderProjects, readSprintProgress, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
 import { renderTile, renderNeutral } from './renderer.js';
 import { render as renderStyle, renderMissing } from './render.js';
@@ -212,17 +212,17 @@ async function claudeMappedIcon(inst) {
 
 // Cycling tile: one key scans all sessions in a subdir; tap advances. Zero config.
 // Shared by Claude (cc_sessions) and Cursor (cursor_sessions).
-async function sessionCycleIcon(inst, subdir, emptyLabel, glyph) {
+async function sessionCycleIcon(inst, subdir, emptyLabel) {
   const list = await readSessionList(inst.stateDir, subdir);
   inst.cycleList = list; // for onRun bounds
   if (!list.length) return renderMissing(emptyLabel);
   const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
   const sess = list[idx];
   const A = agentFor(sess);
-  const pos = list.length > 1 ? `${idx + 1}/${list.length}` : '';
   dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${A.word}`);
-  // Middle = status word + position (e.g. "needs you" / "1/4"); session name is the top title.
-  return renderStyle('agent', { accent: A.accent, glyph, value: A.word, sub: pos, label: sess.label, state: A.state });
+  // Status is carried by the background colour (grey idle / blue working /
+  // green ready / amber needs-you); the session name is the centered text.
+  return renderStyle('agent', { bg: A.accent, value: sess.label, state: A.state });
 }
 
 // --- Cursor: live AI activity from the tracking DB ---------------------------
@@ -241,24 +241,55 @@ async function cursorAiIcon() {
 // global commander_api.txt -> default. So one key can watch a remote machine.
 async function resolveCommanderBase(inst) {
   if (inst.apiBase) return inst.apiBase;
-  const km = await readCommanderKeyMap(inst.stateDir);
-  if (km[inst.keyId]) return km[inst.keyId];
+  const entry = await readCommanderKeyEntry(inst.stateDir, inst.keyId);
+  if (entry.apiBase) return entry.apiBase;
   return readCommanderApi(inst.stateDir);
 }
 
-// --- Commander: sprint progress ----------------------------------------------
+function defaultProjectIdx(projects, persistedRepo) {
+  if (persistedRepo) {
+    const i = projects.findIndex((p) => p.repo === persistedRepo);
+    if (i >= 0) return i;
+  }
+  const ri = projects.findIndex((p) => p.status === 'running');
+  return ri >= 0 ? ri : 0;
+}
+
+async function initSprintProjectIdx(inst, projects) {
+  if (inst.cycleIdx != null) return;
+  const entry = await readCommanderKeyEntry(inst.stateDir, inst.keyId);
+  inst.cycleIdx = defaultProjectIdx(projects, entry.projectRepo);
+}
+
+// --- Commander: sprint progress (nav-pill API, per-project) ------------------
 async function sprintIcon(inst) {
   const base = await resolveCommanderBase(inst);
-  const s = await readSprintStatus(base);
-  if (s.offline) return renderMissing('offline');
-  if (!s.running.length) return renderMissing('no sprint');
-  const sp = s.running[0];                 // surface the first running sprint
-  const { closed, total, label } = sp;
-  const accent = total > 0 && closed >= total ? 'green' : 'teal';
-  dbg(`render sprint ctx=${inst.context} ${label} ${closed}/${total} running=${s.running.length}`);
-  const suffix = s.running.length > 1 ? ` +${s.running.length - 1}` : '';
-  // ring archetype: accent arc = closed/total, centered "closed/total".
-  return renderStyle('ring', { accent, done: closed, total, value: 0, label: `s${label}${suffix}` });
+  const home = await readCommanderProjects(base);
+  if (home.offline) { inst.cycleList = []; return renderMissing('offline'); }
+  if (!home.projects.length) { inst.cycleList = []; return renderMissing('no projects'); }
+
+  inst.cycleList = home.projects;
+  await initSprintProjectIdx(inst, home.projects);
+  const n = home.projects.length;
+  const idx = ((inst.cycleIdx || 0) % n + n) % n;
+  inst.cycleIdx = idx;
+  const proj = home.projects[idx];
+  const pos = n > 1 ? ` ${idx + 1}/${n}` : '';
+
+  const prog = await readSprintProgress(base, proj.repo);
+  if (prog.offline) { inst.cycleList = []; return renderMissing('offline'); }
+  if (!prog.hasSprint) {
+    dbg(`render sprint ctx=${inst.context} ${proj.slug} no sprint`);
+    return renderStyle('fill', { accent: 'grey', pct: 0, value: '—', label: `${proj.slug}${pos}` });
+  }
+
+  const { done, total, sprint, runState } = prog;
+  const complete = total > 0 && done >= total;
+  const pct = total > 0 ? done / total : 0;
+  const accent = complete ? 'green' : runState === 'finished' ? 'green' : 'teal';
+  const tileLabel = `${proj.slug} · S${sprint}${pos}`;
+  dbg(`render sprint ctx=${inst.context} idx=${idx}/${n} ${proj.slug} S${sprint} ${done}/${total}`);
+  return renderStyle('fill', { accent, pct, value: `${done}/${total}`, label: tileLabel });
 }
 
 // --- Commander: agents (coder/tester) ----------------------------------------
@@ -296,11 +327,11 @@ async function ghRateIcon() {
 async function computeIcon(inst) {
   if (inst.type === ACTION_GHRATE) return ghRateIcon();
   if (inst.type === ACTION_CURSORAI) return cursorAiIcon();
-  if (inst.type === ACTION_CURSORCYCLE) return sessionCycleIcon(inst, 'cursor_sessions', 'no cursor', 'pointer');
+  if (inst.type === ACTION_CURSORCYCLE) return sessionCycleIcon(inst, 'cursor_sessions', 'no cursor');
   if (inst.type === ACTION_SPRINT) return sprintIcon(inst);
   if (inst.type === ACTION_CMDAGENTS) return cmdAgentsIcon(inst);
   if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
-  if (inst.type === ACTION_CLAUDECYCLE) return sessionCycleIcon(inst, 'cc_sessions', 'no claude', 'sparkles');
+  if (inst.type === ACTION_CLAUDECYCLE) return sessionCycleIcon(inst, 'cc_sessions', 'no claude');
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.resolvedProject = await resolveProject(inst);
     inst.lastRead = await readProjectCommit(inst.resolvedProject);
@@ -493,9 +524,14 @@ $UD.onDidReceiveSettings((msg) => {
 $UD.onRun(async (msg) => {
   const inst = INSTANCES.get(msg.context) || ensureInstance(msg.context, settingsOf(msg));
   if (inst.type === ACTION_SPRINT) {
-    const base = await resolveCommanderBase(inst);
-    log(`tap sprint -> open dashboard ${base}`);
-    execFile('open', [base], (err) => { if (err) dbg(`open dashboard failed: ${err.message}`); });
+    const n = (inst.cycleList || []).length || 1;
+    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next project
+    const repo = (inst.cycleList || [])[inst.cycleIdx]?.repo;
+    if (repo) {
+      writeCommanderProjectRepo(inst.stateDir, inst.keyId, repo)
+        .then((ok) => dbg(`persisted project ${inst.keyId} -> ${repo} (${ok})`));
+    }
+    log(`tap sprint -> project idx ${inst.cycleIdx}/${n} ${repo || '?'}`);
   } else if (inst.type === ACTION_CMDAGENTS) {
     const n = (inst.cycleList || []).length || 1;
     inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next agent
