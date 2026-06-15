@@ -231,18 +231,51 @@ export async function readCommanderAgents(base) {
 }
 
 // Aggregate Claude Code session files written by cc-hook.sh into one summary.
-// Each file is deck_state/cc_sessions/<id>.json = {state,cwd,label,ts}.
+// Each file is deck_state/cc_sessions/<id>.json =
+//   {state,cwd,label,ts,startedAt,turnStartedAt}.
 //   working/waiting count only when fresh (a crashed session leaves a stale
 //   "working" file; we don't let it pin the light on). Very old files are
 //   deleted. Returns { working, waiting, total, waitingLabel, workingLabel }.
-const SESSION_FRESH_SEC = 20 * 60;   // beyond this, a working/waiting entry is treated as dead
-const SESSION_REAP_SEC = 6 * 60 * 60; // beyond this, delete the file entirely
+const SESSION_FRESH_SEC = 20 * 60;    // beyond this, delete working/waiting zombies
+const DONE_VISIBLE_SEC = 30 * 60;     // done sessions visible in cycle, then deleted
+const IDLE_REAP_SEC = 2 * 60 * 60;   // SessionStart idle with no prompt
+const SESSION_REAP_SEC = 6 * 60 * 60; // beyond this, delete any file
 
-// Full per-session list (newest first). Each: {id,state,cwd,label,ageSec,stale}.
-// stale = older than SESSION_FRESH_SEC (treat working/waiting as idle). Files
-// older than SESSION_REAP_SEC are deleted.
-// Generic over a sessions subdir so Claude (cc_sessions) and Cursor
-// (cursor_sessions) share the exact same logic.
+function sessionShouldReap(obj, age) {
+  const state = String(obj.state || '');
+  const label = String(obj.label || '');
+  const cwd = String(obj.cwd || '');
+  if (!label && !cwd) return true;
+  if (age > SESSION_REAP_SEC) return true;
+  if ((state === 'working' || state === 'waiting') && age > SESSION_FRESH_SEC) return true;
+  if (state === 'done' && age > DONE_VISIBLE_SEC) return true;
+  if (state === 'idle' && age > IDLE_REAP_SEC) return true;
+  return false;
+}
+
+function parseSessionEntry(id, obj, now) {
+  const ts = Number(obj.ts) || 0;
+  const age = now - ts;
+  const state = String(obj.state || '');
+  return {
+    id,
+    state,
+    cwd: String(obj.cwd || ''),
+    label: String(obj.label || ''),
+    ts,
+    startedAt: Number(obj.startedAt) || ts,
+    turnStartedAt: Number(obj.turnStartedAt) || 0,
+    ageSec: age,
+    stale: (state === 'working' || state === 'waiting') && age > SESSION_FRESH_SEC,
+  };
+}
+
+const SESSION_ACTIVE_RANK = { working: 0, waiting: 1, done: 2 };
+
+// Full per-session list (newest first). Each: {id,state,cwd,label,ts,startedAt,
+// turnStartedAt,ageSec,stale}. Stale working/waiting and old done/idle files are
+// deleted on read. Generic over a sessions subdir so Claude (cc_sessions) and
+// Cursor (cursor_sessions) share the exact same logic.
 export async function readSessionList(stateDir, subdir = 'cc_sessions') {
   const dir = path.join(stateDir, subdir);
   let files;
@@ -256,21 +289,45 @@ export async function readSessionList(stateDir, subdir = 'cc_sessions') {
     try { obj = JSON.parse(await fs.readFile(full, 'utf8')); } catch { continue; }
     const ts = Number(obj.ts) || 0;
     const age = now - ts;
-    if (age > SESSION_REAP_SEC) { fs.unlink(full).catch(() => {}); continue; }
-    list.push({
-      id: f.replace(/\.json$/, ''),
-      state: String(obj.state || ''),
-      cwd: String(obj.cwd || ''),
-      label: String(obj.label || ''),
-      ageSec: age,
-      stale: age > SESSION_FRESH_SEC,
-    });
+    if (sessionShouldReap(obj, age)) { fs.unlink(full).catch(() => {}); continue; }
+    list.push(parseSessionEntry(f.replace(/\.json$/, ''), obj, now));
   }
   list.sort((a, b) => a.ageSec - b.ageSec); // newest (smallest age) first
   return list;
 }
 
+// Cycle/mapped tiles: only sessions worth showing right now.
+// Returns { list, anyFiles } where anyFiles means files existed but none active.
+export async function readActiveSessionList(stateDir, subdir = 'cc_sessions') {
+  const all = await readSessionList(stateDir, subdir);
+  const list = all
+    .filter((s) => ['working', 'waiting', 'done'].includes(s.state) && (s.label || s.cwd))
+    .sort((a, b) => {
+      const ra = SESSION_ACTIVE_RANK[a.state] ?? 9;
+      const rb = SESSION_ACTIVE_RANK[b.state] ?? 9;
+      return ra - rb || a.ageSec - b.ageSec;
+    });
+  return { list, anyFiles: all.length > 0 && list.length === 0 };
+}
+
+export function sessionDurationSec(sess, now) {
+  const n = now ?? Math.floor(Date.now() / 1000);
+  if (!sess) return 0;
+  if (sess.state === 'working') {
+    const t = Number(sess.turnStartedAt) || Number(sess.ts) || 0;
+    return t ? Math.max(0, n - t) : sess.ageSec;
+  }
+  return sess.ageSec;
+}
+
+export function sessionDurationText(sess, now) {
+  const sec = sessionDurationSec(sess, now);
+  if (sess?.state === 'done') return `done ${formatAge(sec)}`;
+  return formatAge(sec);
+}
+
 export const readClaudeSessionList = (stateDir) => readSessionList(stateDir, 'cc_sessions');
+export const readActiveClaudeSessionList = (stateDir) => readActiveSessionList(stateDir, 'cc_sessions');
 
 // Per-deck-key project/session map: deck_state/cc_keys.json = {"0_0":"coder",...}.
 // Lets you assign keys to sessions without the (flaky) Ulanzi config panel.
@@ -304,9 +361,8 @@ export async function readClaudeSessions(stateDir) {
     }
     const ts = Number(obj.ts) || 0;
     const age = now - ts;
-    if (age > SESSION_REAP_SEC) { fs.unlink(full).catch(() => {}); continue; }
+    if (sessionShouldReap(obj, age)) { fs.unlink(full).catch(() => {}); continue; }
     out.total++;
-    if (age > SESSION_FRESH_SEC) continue; // stale: treat as idle, don't count busy
     if (obj.state === 'working') { out.working++; out.workingLabel = obj.label || ''; }
     else if (obj.state === 'waiting') { out.waiting++; out.waitingLabel = obj.label || ''; }
   }

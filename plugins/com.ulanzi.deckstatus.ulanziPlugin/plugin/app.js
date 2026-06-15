@@ -14,6 +14,7 @@ import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
   readClaudeSessionList, readSessionList, readKeyMap,
+  readActiveSessionList, sessionDurationText,
   readCommanderApi, readCommanderKeyEntry, writeCommanderKey, writeCommanderProjectRepo,
   readCommanderProjects, readSprintProgress, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
@@ -179,7 +180,22 @@ function agentFor(sess) {
   if (sess.state === 'working') return { accent: 'blue', state: 'running', word: 'working' };
   if (sess.state === 'waiting') return { accent: 'amber', state: undefined, word: 'needs you' };
   if (sess.state === 'done') return { accent: 'green', state: 'done', word: 'ready' };
+  if (sess.state === 'idle') return { accent: 'grey', state: 'idle', word: 'idle' };
   return { accent: 'grey', state: 'idle', word: 'idle' };
+}
+
+function renderSessionAgent(sess, { idx = 0, total = 1, title } = {}) {
+  const A = agentFor(sess);
+  const pos = total > 1 ? ` ${idx + 1}/${total}` : '';
+  const name = title || sess.label || sess.cwd.split('/').pop() || 'session';
+  return renderStyle('agent', {
+    accent: A.accent,
+    glyph: 'sparkles',
+    value: sessionDurationText(sess),
+    label: name + pos,
+    sub: A.word,
+    state: A.state,
+  });
 }
 
 function matchesFilter(sess, filter) {
@@ -205,23 +221,26 @@ async function claudeMappedIcon(inst) {
     // Unmapped: show this key's id so you can add it to cc_keys.json.
     return renderMissing(`map ${inst.keyId}`);
   }
-  const A = agentFor(pickSession(list, filter));
-  return renderStyle('agent', { accent: A.accent, glyph: 'sparkles', value: filter, label: A.word, state: A.state });
+  const sess = pickSession(list, filter);
+  if (!sess) {
+    return renderStyle('agent', {
+      accent: 'grey', glyph: 'sparkles', value: '—', label: filter, sub: 'idle', state: 'idle',
+    });
+  }
+  return renderSessionAgent(sess, { title: filter });
 }
 
-// Cycling tile: one key scans all sessions in a subdir; tap advances. Zero config.
-// Shared by Claude (cc_sessions) and Cursor (cursor_sessions).
+// Cycling tile: one key scans active sessions in a subdir; tap advances.
 async function sessionCycleIcon(inst, subdir, emptyLabel) {
-  const list = await readSessionList(inst.stateDir, subdir);
+  const { list, anyFiles } = await readActiveSessionList(inst.stateDir, subdir);
   inst.cycleList = list; // for onRun bounds
-  if (!list.length) return renderMissing(emptyLabel);
+  if (!list.length) return renderMissing(anyFiles ? 'no active' : emptyLabel);
   const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
   const sess = list[idx];
   const A = agentFor(sess);
+  managePulse(inst, A.state === 'running');
   dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${A.word}`);
-  // Status is carried by the background colour (grey idle / blue working /
-  // green ready / amber needs-you); the session name is the centered text.
-  return renderStyle('agent', { bg: A.accent, value: sess.label, state: A.state });
+  return renderSessionAgent(sess, { idx, total: list.length });
 }
 
 // --- Cursor: unified tile (hook sessions + AI snippet fallback) --------------
