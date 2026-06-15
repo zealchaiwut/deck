@@ -14,7 +14,7 @@ import {
   readSource, resetCounter, resolveStateDir, readProjectCommit,
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
   readClaudeSessionList, readSessionList, readKeyMap,
-  readActiveSessionList, sessionDurationText,
+  readActiveSessionList, sessionDurationText, sessionTitle,
   readCommanderApi, readCommanderKeyEntry, writeCommanderKey, writeCommanderProjectRepo,
   readCommanderProjects, readSprintProgress, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
@@ -184,15 +184,14 @@ function agentFor(sess) {
   return { accent: 'grey', state: 'idle', word: 'idle' };
 }
 
-function renderSessionAgent(sess, { idx = 0, total = 1, title } = {}) {
+function renderSessionAgent(sess, { idx = 0, total = 1 } = {}) {
   const A = agentFor(sess);
   const pos = total > 1 ? ` ${idx + 1}/${total}` : '';
-  const name = title || sess.label || sess.cwd.split('/').pop() || 'session';
   return renderStyle('agent', {
     accent: A.accent,
     glyph: 'sparkles',
     value: sessionDurationText(sess),
-    label: name + pos,
+    label: sessionTitle(sess) + pos,
     sub: A.word,
     state: A.state,
   });
@@ -227,7 +226,7 @@ async function claudeMappedIcon(inst) {
       accent: 'grey', glyph: 'sparkles', value: '—', label: filter, sub: 'idle', state: 'idle',
     });
   }
-  return renderSessionAgent(sess, { title: filter });
+  return renderSessionAgent(sess);
 }
 
 // Cycling tile: one key scans active sessions in a subdir; tap advances.
