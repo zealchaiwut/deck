@@ -178,10 +178,11 @@ export async function readCommanderProjects(base) {
   return { offline: false, projects };
 }
 
-// /api/sprint-progress?repo= — same source of truth as the dashboard nav pill.
+// /api/sprint-progress?repo=&project= — nav-pill source; both params required
+// so Commander filters live/persisted tiers per project (repo alone is ignored).
 export async function readSprintProgress(base, repo) {
   const q = encodeURIComponent(String(repo || ''));
-  const d = await fetchJson(`${base}/api/sprint-progress?repo=${q}`);
+  const d = await fetchJson(`${base}/api/sprint-progress?repo=${q}&project=${q}`);
   if (!d) return { offline: true, hasSprint: false, done: 0, total: 0, sprint: 0, runState: '' };
   return {
     offline: false,

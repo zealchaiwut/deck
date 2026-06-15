@@ -307,16 +307,17 @@ async function sprintIcon(inst) {
   if (prog.offline) { inst.cycleList = []; return renderMissing('offline'); }
   if (!prog.hasSprint) {
     dbg(`render sprint ctx=${inst.context} ${proj.slug} no sprint`);
-    return renderStyle('fill', { accent: 'grey', pct: 0, value: '—', label: `${proj.slug}${pos}` });
+    return renderStyle('fill', { accent: 'grey', pct: 0, value: '—', slug: proj.slug, pos: pos.trim() || undefined });
   }
 
   const { done, total, sprint, runState } = prog;
   const complete = total > 0 && done >= total;
   const pct = total > 0 ? done / total : 0;
   const accent = complete ? 'green' : runState === 'finished' ? 'green' : 'teal';
-  const tileLabel = `${proj.slug} · S${sprint}${pos}`;
   dbg(`render sprint ctx=${inst.context} idx=${idx}/${n} ${proj.slug} S${sprint} ${done}/${total}`);
-  return renderStyle('fill', { accent, pct, value: `${done}/${total}`, label: tileLabel });
+  return renderStyle('fill', {
+    accent, pct, value: `${done}/${total}`, slug: proj.slug, sprint, pos: pos.trim() || undefined,
+  });
 }
 
 // --- Commander: agents (coder/tester) ----------------------------------------
