@@ -241,39 +241,107 @@ const DONE_VISIBLE_SEC = 30 * 60;     // done sessions visible in cycle, then de
 const IDLE_REAP_SEC = 2 * 60 * 60;   // SessionStart idle with no prompt
 const SESSION_REAP_SEC = 6 * 60 * 60; // beyond this, delete any file
 
-function sessionShouldReap(obj, age) {
+// Live claude processes keyed by cwd -> process start (unix sec). Used for real
+// iTerm uptime (not just hook session startedAt) and to keep long turns visible.
+let liveProcCache = { at: 0, byCwd: new Map() };
+const LIVE_PROC_CACHE_MS = 5000;
+
+// macOS ps uses etime ([[dd-]hh:]mm:ss), not GNU etimes.
+function parsePsEtime(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return NaN;
+  let days = 0;
+  let clock = t;
+  if (t.includes('-')) {
+    const [d, rest] = t.split('-');
+    days = parseInt(d, 10) || 0;
+    clock = rest;
+  }
+  const parts = clock.split(':').map((x) => parseInt(x, 10));
+  let h = 0; let m = 0; let s = 0;
+  if (parts.length === 3) [h, m, s] = parts;
+  else if (parts.length === 2) [m, s] = parts;
+  else if (parts.length === 1) [s] = parts;
+  return days * 86400 + h * 3600 + m * 60 + s;
+}
+
+export async function getLiveClaudeByCwd() {
+  const now = Date.now();
+  if (now - liveProcCache.at < LIVE_PROC_CACHE_MS) return liveProcCache.byCwd;
+  const byCwd = new Map();
+  const nowSec = Math.floor(now / 1000);
+  try {
+    const { stdout } = await pexec('pgrep', ['-x', 'claude'], { timeout: 3000 });
+    for (const line of String(stdout).trim().split('\n')) {
+      const pid = line.trim();
+      if (!pid) continue;
+      try {
+        const { stdout: lsofOut } = await pexec('lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'], { timeout: 3000 });
+        const cwd = String(lsofOut).split('\n').find((l) => l.startsWith('n'))?.slice(1);
+        if (!cwd) continue;
+        const { stdout: etimeOut } = await pexec('ps', ['-p', pid, '-o', 'etime='], { timeout: 3000 });
+        const elapsed = parsePsEtime(etimeOut);
+        const processStartedAt = Number.isFinite(elapsed) ? nowSec - elapsed : nowSec;
+        const prev = byCwd.get(cwd);
+        if (!prev || processStartedAt < prev.processStartedAt) {
+          byCwd.set(cwd, { processStartedAt, pid });
+        }
+      } catch { /* process exited */ }
+    }
+  } catch { /* no claude running */ }
+  liveProcCache = { at: now, byCwd };
+  return byCwd;
+}
+
+/** @deprecated use getLiveClaudeByCwd */
+export async function getLiveClaudeCwds() {
+  const m = await getLiveClaudeByCwd();
+  return new Set(m.keys());
+}
+
+function sessionShouldReap(obj, age, liveByCwd) {
   const state = String(obj.state || '');
   const label = String(obj.label || '');
   const cwd = String(obj.cwd || '');
+  const live = liveByCwd?.has(cwd);
   if (!label && !cwd) return true;
   if (age > SESSION_REAP_SEC) return true;
-  if ((state === 'working' || state === 'waiting') && age > SESSION_FRESH_SEC) return true;
+  if ((state === 'working' || state === 'waiting') && age > SESSION_FRESH_SEC) {
+    if (live) return false; // long turn: process still running at this cwd
+    return true;
+  }
   if (state === 'done' && age > DONE_VISIBLE_SEC) return true;
-  if (state === 'idle' && age > IDLE_REAP_SEC) return true;
+  if (state === 'idle' && age > IDLE_REAP_SEC && !live) return true;
   return false;
 }
 
-function parseSessionEntry(id, obj, now) {
+function parseSessionEntry(id, obj, now, liveByCwd) {
   const ts = Number(obj.ts) || 0;
   const age = now - ts;
   const state = String(obj.state || '');
+  const cwd = String(obj.cwd || '');
+  const liveInfo = liveByCwd?.get(cwd);
+  const live = !!liveInfo;
+  const processStartedAt = liveInfo?.processStartedAt || 0;
   return {
     id,
     state,
-    cwd: String(obj.cwd || ''),
+    cwd,
     label: String(obj.label || ''),
     ts,
     startedAt: Number(obj.startedAt) || ts,
     turnStartedAt: Number(obj.turnStartedAt) || 0,
+    processStartedAt,
     ageSec: age,
-    stale: (state === 'working' || state === 'waiting') && age > SESSION_FRESH_SEC,
+    live,
+    stale: (state === 'working' || state === 'waiting') && age > SESSION_FRESH_SEC && !live,
   };
 }
 
-const SESSION_ACTIVE_RANK = { working: 0, waiting: 1, done: 2 };
+const SESSION_ACTIVE_RANK = { working: 0, live: 1, waiting: 2, done: 3 };
 
 // Full per-session list (newest first). Each: {id,state,cwd,label,ts,startedAt,
-// turnStartedAt,ageSec,stale}. Stale working/waiting and old done/idle files are
+// turnStartedAt,ageSec,live,stale}. Stale working/waiting and old done/idle files are
 // deleted on read. Generic over a sessions subdir so Claude (cc_sessions) and
 // Cursor (cursor_sessions) share the exact same logic.
 export async function readSessionList(stateDir, subdir = 'cc_sessions') {
@@ -281,6 +349,7 @@ export async function readSessionList(stateDir, subdir = 'cc_sessions') {
   let files;
   try { files = await fs.readdir(dir); } catch { return []; }
   const now = Math.floor(Date.now() / 1000);
+  const liveByCwd = subdir === 'cc_sessions' ? await getLiveClaudeByCwd() : new Map();
   const list = [];
   for (const f of files) {
     if (!f.endsWith('.json')) continue;
@@ -289,23 +358,32 @@ export async function readSessionList(stateDir, subdir = 'cc_sessions') {
     try { obj = JSON.parse(await fs.readFile(full, 'utf8')); } catch { continue; }
     const ts = Number(obj.ts) || 0;
     const age = now - ts;
-    if (sessionShouldReap(obj, age)) { fs.unlink(full).catch(() => {}); continue; }
-    list.push(parseSessionEntry(f.replace(/\.json$/, ''), obj, now));
+    if (sessionShouldReap(obj, age, liveByCwd)) { fs.unlink(full).catch(() => {}); continue; }
+    list.push(parseSessionEntry(f.replace(/\.json$/, ''), obj, now, liveByCwd));
   }
   list.sort((a, b) => a.ageSec - b.ageSec); // newest (smallest age) first
   return list;
 }
 
-// Cycle/mapped tiles: only sessions worth showing right now.
-// Returns { list, anyFiles } where anyFiles means files existed but none active.
+// Cycle/mapped tiles: sessions worth showing right now.
+// Includes idle when a live claude process is still at that cwd (iTerm tab open).
 export async function readActiveSessionList(stateDir, subdir = 'cc_sessions') {
   const all = await readSessionList(stateDir, subdir);
   const list = all
-    .filter((s) => ['working', 'waiting', 'done'].includes(s.state) && (s.label || s.cwd))
+    .filter((s) => {
+      if (!s.label && !s.cwd) return false;
+      if (['working', 'waiting', 'done'].includes(s.state)) return true;
+      if (s.state === 'idle' && s.live) return true;
+      return false;
+    })
     .sort((a, b) => {
-      const ra = SESSION_ACTIVE_RANK[a.state] ?? 9;
-      const rb = SESSION_ACTIVE_RANK[b.state] ?? 9;
-      return ra - rb || a.ageSec - b.ageSec;
+      const rank = (s) => {
+        if (s.state === 'working') return SESSION_ACTIVE_RANK.working;
+        if (s.state === 'waiting') return SESSION_ACTIVE_RANK.waiting;
+        if (s.state === 'idle' && s.live) return SESSION_ACTIVE_RANK.live;
+        return SESSION_ACTIVE_RANK.done;
+      };
+      return rank(a) - rank(b) || a.ageSec - b.ageSec;
     });
   return { list, anyFiles: all.length > 0 && list.length === 0 };
 }
@@ -313,6 +391,10 @@ export async function readActiveSessionList(stateDir, subdir = 'cc_sessions') {
 export function sessionDurationSec(sess, now) {
   const n = now ?? Math.floor(Date.now() / 1000);
   if (!sess) return 0;
+  // Live iTerm tab — show real process uptime, not hook file timestamps.
+  if (sess.live && sess.processStartedAt) {
+    return Math.max(0, n - sess.processStartedAt);
+  }
   if (sess.state === 'working') {
     const t = Number(sess.turnStartedAt) || Number(sess.ts) || 0;
     return t ? Math.max(0, n - t) : sess.ageSec;
@@ -335,6 +417,16 @@ export function sessionProject(sess) {
   if (devIdx >= 0 && parts[devIdx + 1]) return parts[devIdx + 1];
   if (parts.length >= 2) return parts[parts.length - 2];
   return parts[parts.length - 1] || String(sess?.label || '');
+}
+
+// Tile line 1: project slug under ~/dev, or "-" when cwd is outside dev (plain iTerm).
+export function sessionDisplayProject(sess) {
+  const cwd = String(sess?.cwd || '').replace(/\/$/, '');
+  if (!cwd) return '-';
+  const parts = cwd.split('/').filter(Boolean);
+  const devIdx = parts.lastIndexOf('dev');
+  if (devIdx >= 0 && parts[devIdx + 1]) return parts[devIdx + 1];
+  return '-';
 }
 
 export function sessionRole(sess) {
