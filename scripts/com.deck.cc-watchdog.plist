@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Optional: removes zombie Claude session files when iTerm tabs die without
+     SessionEnd. Activate yourself:
+       cp scripts/com.deck.cc-watchdog.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/com.deck.cc-watchdog.plist
+     Stop/remove:
+       launchctl unload -w ~/Library/LaunchAgents/com.deck.cc-watchdog.plist
+       rm ~/Library/LaunchAgents/com.deck.cc-watchdog.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deck.cc-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/chaiwutchaianuchittrakul/dev/deck/scripts/cc-watchdog.sh</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/chaiwutchaianuchittrakul/dev/deck/scripts/deck_state/_cc-watchdog.log</string>
+</dict>
+</plist>
