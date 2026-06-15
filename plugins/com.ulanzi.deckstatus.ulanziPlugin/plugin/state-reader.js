@@ -326,6 +326,31 @@ export function sessionDurationText(sess, now) {
   return formatAge(sec);
 }
 
+// Project folder under ~/dev (e.g. commander from .../dev/commander/coder).
+export function sessionProject(sess) {
+  const cwd = String(sess?.cwd || '').replace(/\/$/, '');
+  if (!cwd) return String(sess?.label || '');
+  const parts = cwd.split('/').filter(Boolean);
+  const devIdx = parts.lastIndexOf('dev');
+  if (devIdx >= 0 && parts[devIdx + 1]) return parts[devIdx + 1];
+  if (parts.length >= 2) return parts[parts.length - 2];
+  return parts[parts.length - 1] || String(sess?.label || '');
+}
+
+export function sessionRole(sess) {
+  const cwd = String(sess?.cwd || '').replace(/\/$/, '');
+  const parts = cwd.split('/').filter(Boolean);
+  return String(sess?.label || '') || parts[parts.length - 1] || 'session';
+}
+
+// Tile title: "commander · coder" (or just "deck" when project === role).
+export function sessionTitle(sess) {
+  const project = sessionProject(sess);
+  const role = sessionRole(sess);
+  if (!project || project === role) return role || 'session';
+  return `${project} · ${role}`;
+}
+
 export const readClaudeSessionList = (stateDir) => readSessionList(stateDir, 'cc_sessions');
 export const readActiveClaudeSessionList = (stateDir) => readActiveSessionList(stateDir, 'cc_sessions');
 
