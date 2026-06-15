@@ -193,17 +193,35 @@ function renderTimestat({ accent, glyph: gname, value, state, label }) {
   return toDataUrl(svgDoc(body));
 }
 
-// --- fill: background fills bottom-up by pct (progress-bar-as-tile); centered
-// value + title on top. Used by the sprint tile — a full green tile == done.
-function renderFill({ accent, pct, value, label }) {
+// --- fill: background fills bottom-up by pct (progress-bar-as-tile).
+// Default: small top label + big centered value (legacy).
+// Sprint layout (slug set): big project slug, sprint line, smaller done/total.
+function renderFill({ accent, pct, value, label, slug, sprint, pos }) {
   const a = hex(accent);
   const p = Math.max(0, Math.min(1, Number(pct) || 0));
   const fillH = Math.round(SIZE * p);
   const y = SIZE - fillH;
   const defs = `<clipPath id="rc"><rect x="0" y="0" width="${SIZE}" height="${SIZE}" rx="34"/></clipPath>`;
+  const fillRect = `<g clip-path="url(#rc)"><rect x="0" y="${y}" width="${SIZE}" height="${fillH}" fill="${a}" fill-opacity="0.9"/></g>`;
+
+  if (slug) {
+    const slugText = String(slug);
+    const slugSize = slugText.length > 12 ? 28 : slugText.length > 9 ? 32 : 36;
+    const vSize = Math.round(fitSize(value) * 0.8);
+    const sprintLine = sprint ? `S${sprint}${pos ? ` ${pos}` : ''}` : (pos || '');
+    const body = [
+      bg(),
+      fillRect,
+      text(slugText, SIZE / 2, 74, slugSize, '700', TEXT),
+      sprintLine ? text(sprintLine, SIZE / 2, 108, 20, '600', DIM) : '',
+      text(String(value != null ? value : '—'), SIZE / 2, 150, vSize, '700', TEXT),
+    ].join('');
+    return toDataUrl(svgDoc(body, defs));
+  }
+
   const body = [
-    bg(),                                                       // dark base track
-    `<g clip-path="url(#rc)"><rect x="0" y="${y}" width="${SIZE}" height="${fillH}" fill="${a}" fill-opacity="0.9"/></g>`,
+    bg(),
+    fillRect,
     topLabel(label),
     text(String(value != null ? value : '—'), SIZE / 2, SIZE / 2 + 14, fitSize(value), '700', TEXT),
   ].join('');
