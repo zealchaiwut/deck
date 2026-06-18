@@ -149,39 +149,6 @@ async function fetchJson(url) {
   }
 }
 
-// /api/sprint-status -> { offline, running: [{label,closed,total,wallSecs}] }.
-// sprint-status reports progress {0,0} for in-flight sprints, so when total is 0
-// we derive real closed/total from the issues carrying the sprint's exact label
-// (the int `?sprint=` filter misses sub-sprints like "sprint-66.4").
-const DONE_COL = /done|merged|approved|uat|complete|closed/i;
-export async function readSprintStatus(base) {
-  const d = await fetchJson(`${base}/api/sprint-status`);
-  if (!d) return { offline: true, running: [] };
-  const running = (d.running_sprints || []).map((s) => ({
-    label: String(s.sprint_label || '').replace(/^sprint-/, ''),
-    fullLabel: String(s.sprint_label || ''),
-    closed: s.progress?.closed ?? 0,
-    total: s.progress?.total ?? 0,
-    wallSecs: s.wall_clock_secs || 0,
-  }));
-
-  if (running.some((s) => !s.total)) {
-    const issues = await fetchJson(`${base}/api/issues`);
-    if (Array.isArray(issues)) {
-      for (const s of running) {
-        if (s.total) continue;
-        const rows = issues.filter((i) =>
-          (i.labels || []).some((l) => ((l && l.name) || l) === s.fullLabel));
-        if (rows.length) {
-          s.total = rows.length;
-          s.closed = rows.filter((i) => i.state === 'closed' || DONE_COL.test(i.column || '')).length;
-        }
-      }
-    }
-  }
-  return { offline: false, running };
-}
-
 // /api/home -> project list for tap-to-cycle tracking (URL-only PI).
 export async function readCommanderProjects(base) {
   const d = await fetchJson(`${base}/api/home`);
@@ -212,6 +179,65 @@ export async function readSprintProgress(base, repo) {
     total: d.total ?? 0,
     runState: String(d.run_state || 'running'),
   };
+}
+
+// Running sprints only — for the sprint cycle tile (home + sprint-status + progress).
+export async function readRunningSprints(base) {
+  const [home, sprintStatus] = await Promise.all([
+    fetchJson(`${base}/api/home`),
+    fetchJson(`${base}/api/sprint-status`),
+  ]);
+  if (!home || !Array.isArray(home.projects)) return { offline: true, sprints: [] };
+
+  const runningByRepo = new Map();
+  for (const rs of sprintStatus?.running_sprints || []) {
+    runningByRepo.set(String(rs.project || ''), rs);
+  }
+
+  const candidates = home.projects.filter((p) => {
+    const repo = String(p.repo || '');
+    const status = String(p.status || 'idle');
+    return status === 'running' || runningByRepo.has(repo) || !!p.sprint_running;
+  });
+
+  const progs = await Promise.all(
+    candidates.map((p) => readSprintProgress(base, String(p.repo || '')).then((prog) => ({ p, prog }))),
+  );
+
+  const sprints = [];
+  for (const { p, prog } of progs) {
+    if (prog.offline) continue;
+    const repo = String(p.repo || '');
+    const slug = String(p.slug || '');
+    const status = String(p.status || 'idle');
+    const sr = p.sprint_running || {};
+    const rs = runningByRepo.get(repo);
+    const elapsed = Number(sr.elapsed_sec) || Number(rs?.wall_clock_secs) || 0;
+    const done = prog.done ?? 0;
+    const total = prog.total ?? 0;
+    const runState = prog.runState || (status === 'running' || rs ? 'running' : '');
+    let state = 'idle';
+    if (runState === 'finished' || (total > 0 && done >= total)) state = 'completed';
+    else if (runState === 'running' || status === 'running' || rs) state = 'working';
+    if (state === 'idle' && !prog.hasSprint) continue;
+
+    sprints.push({
+      slug,
+      repo,
+      name: String(p.name || slug),
+      sprint: prog.sprint ?? 0,
+      done,
+      total,
+      runState,
+      state,
+      runningSec: elapsed,
+      runningTime: formatAge(elapsed),
+    });
+  }
+
+  const rank = { working: 0, completed: 1, idle: 2 };
+  sprints.sort((a, b) => (rank[a.state] ?? 9) - (rank[b.state] ?? 9) || a.slug.localeCompare(b.slug));
+  return { offline: false, sprints };
 }
 
 // /api/agents -> { offline, agents: [...] }. Commander agents that are CURRENTLY
@@ -250,12 +276,9 @@ export async function readCommanderAgents(base) {
   return { offline: false, agents };
 }
 
-// Aggregate Claude Code session files written by cc-hook.sh into one summary.
-// Each file is deck_state/cc_sessions/<id>.json =
-//   {state,cwd,label,ts,startedAt,turnStartedAt}.
-//   working/waiting count only when fresh (a crashed session leaves a stale
-//   "working" file; we don't let it pin the light on). Very old files are
-//   deleted. Returns { working, waiting, total, waitingLabel, workingLabel }.
+// Claude Code session files written by cc-hook.sh: deck_state/cc_sessions/<id>.json
+// = {state,cwd,label,ts,startedAt,turnStartedAt}. Stale working/waiting and old
+// done/idle files are deleted on read.
 const SESSION_FRESH_SEC = 20 * 60;    // beyond this, delete working/waiting zombies
 const DONE_VISIBLE_SEC = 30 * 60;     // done sessions visible in cycle, then deleted
 const IDLE_REAP_SEC = 2 * 60 * 60;   // SessionStart idle with no prompt
@@ -311,12 +334,6 @@ export async function getLiveClaudeByCwd() {
   } catch { /* no claude running */ }
   liveProcCache = { at: now, byCwd };
   return byCwd;
-}
-
-/** @deprecated use getLiveClaudeByCwd */
-export async function getLiveClaudeCwds() {
-  const m = await getLiveClaudeByCwd();
-  return new Set(m.keys());
 }
 
 function sessionShouldReap(obj, age, liveByCwd) {
@@ -428,17 +445,6 @@ export function sessionDurationText(sess, now) {
   return formatAge(sec);
 }
 
-// Project folder under ~/dev (e.g. commander from .../dev/commander/coder).
-export function sessionProject(sess) {
-  const cwd = String(sess?.cwd || '').replace(/\/$/, '');
-  if (!cwd) return String(sess?.label || '');
-  const parts = cwd.split('/').filter(Boolean);
-  const devIdx = parts.lastIndexOf('dev');
-  if (devIdx >= 0 && parts[devIdx + 1]) return parts[devIdx + 1];
-  if (parts.length >= 2) return parts[parts.length - 2];
-  return parts[parts.length - 1] || String(sess?.label || '');
-}
-
 // Tile line 1: project slug under ~/dev, or "-" when cwd is outside dev (plain iTerm).
 export function sessionDisplayProject(sess) {
   const cwd = String(sess?.cwd || '').replace(/\/$/, '');
@@ -455,16 +461,7 @@ export function sessionRole(sess) {
   return String(sess?.label || '') || parts[parts.length - 1] || 'session';
 }
 
-// Tile title: "commander · coder" (or just "deck" when project === role).
-export function sessionTitle(sess) {
-  const project = sessionProject(sess);
-  const role = sessionRole(sess);
-  if (!project || project === role) return role || 'session';
-  return `${project} · ${role}`;
-}
-
 export const readClaudeSessionList = (stateDir) => readSessionList(stateDir, 'cc_sessions');
-export const readActiveClaudeSessionList = (stateDir) => readActiveSessionList(stateDir, 'cc_sessions');
 
 // Per-deck-key project/session map: deck_state/cc_keys.json = {"0_0":"coder",...}.
 // Lets you assign keys to sessions without the (flaky) Ulanzi config panel.
@@ -475,35 +472,6 @@ export async function readKeyMap(stateDir) {
   } catch {
     return {};
   }
-}
-
-export async function readClaudeSessions(stateDir) {
-  const out = { working: 0, waiting: 0, total: 0, waitingLabel: '', workingLabel: '' };
-  const dir = path.join(stateDir, 'cc_sessions');
-  let files;
-  try {
-    files = await fs.readdir(dir);
-  } catch {
-    return out; // no sessions yet
-  }
-  const now = Math.floor(Date.now() / 1000);
-  for (const f of files) {
-    if (!f.endsWith('.json')) continue;
-    const full = path.join(dir, f);
-    let obj;
-    try {
-      obj = JSON.parse(await fs.readFile(full, 'utf8'));
-    } catch {
-      continue; // partial/locked file — skip this cycle
-    }
-    const ts = Number(obj.ts) || 0;
-    const age = now - ts;
-    if (sessionShouldReap(obj, age)) { fs.unlink(full).catch(() => {}); continue; }
-    out.total++;
-    if (obj.state === 'working') { out.working++; out.workingLabel = obj.label || ''; }
-    else if (obj.state === 'waiting') { out.waiting++; out.waitingLabel = obj.label || ''; }
-  }
-  return out;
 }
 
 // --- GitHub API rate-limit usage ---------------------------------------------
@@ -611,8 +579,7 @@ export async function readProjectCommit(projectPath) {
 }
 
 // Turn a bound "source" into an absolute file path + kind.
-//   - "coding_antigravity"        -> tile_coding_antigravity.json|.txt   (tile name)
-//   - "antigravity_count.txt"     -> antigravity_count.txt               (direct path)
+//   - "my_tile"                   -> tile_my_tile.json|.txt               (tile name)
 //   - "sub/dir/foo.json"          -> sub/dir/foo.json                    (direct path)
 // Returns { jsonPath, txtPath } candidates to try in order (some may be null).
 function candidatePaths(stateDir, source) {

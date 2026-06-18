@@ -34,14 +34,6 @@ export const GLYPHS = {
     "mode": "stroke",
     "body": "<path d=\"M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12\" /> <path d=\"M16 3v4\" /> <path d=\"M8 3v4\" /> <path d=\"M4 11h16\" /> <path d=\"M11 15h1\" /> <path d=\"M12 15v3\" />"
   },
-  "check": {
-    "mode": "stroke",
-    "body": "<path d=\"M5 12l5 5l10 -10\" />"
-  },
-  "alert-triangle": {
-    "mode": "stroke",
-    "body": "<path d=\"M12 9v4\" /> <path d=\"M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0\" /> <path d=\"M12 16h.01\" />"
-  },
   "clock": {
     "mode": "stroke",
     "body": "<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\" /> <path d=\"M12 7v5l3 3\" />"
@@ -49,5 +41,13 @@ export const GLYPHS = {
   "activity": {
     "mode": "stroke",
     "body": "<path d=\"M3 12h4l3 8l4 -16l3 8h4\" />"
+  },
+  "brand-claude": {
+    "mode": "fill",
+    "body": "<path d=\"M12 2a1 1 0 0 1 .93.64l2.1 5.5 5.72 2.08a1 1 0 0 1 .04 1.87l-5.4 2.3-2 5.86a1 1 0 0 1-1.86 0l-2-5.86-5.4-2.3a1 1 0 0 1 .04-1.87l5.72-2.08 2.1-5.5A1 1 0 0 1 12 2z\" />"
+  },
+  "brand-cursor": {
+    "mode": "fill",
+    "body": "<path d=\"M6.2 3.8a1 1 0 0 1 1.1-.22l11.5 5.8a1 1 0 0 1 .12 1.78l-4.9 2.4 1.8 5.6a1 1 0 0 1-1.5 1.08l-4.6-3.4-4.2 2.1a1 1 0 0 1-1.42-.82V4.8a1 1 0 0 1 .62-.92z\" />"
   }
 };

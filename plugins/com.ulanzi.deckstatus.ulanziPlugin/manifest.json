@@ -1,9 +1,9 @@
 {
   "Author": "Chaiwut Chaianuchittrakul",
   "Name": "Deck Status",
-  "Description": "Render live status from local deck_state files (written by your scripts) onto deck keys. Reads tile_<name>.json / .txt and integer counter files; this plugin only reads, never writes (except resetting the antigravity counter on tap).",
+  "Description": "Live status tiles for Cursor, Commander sprints, and Claude Code sessions — plus Antigravity git age and GitHub API usage.",
   "Icon": "resources/icon.png",
-  "Version": "1.0.0",
+  "Version": "1.1.0",
   "Category": "Deck Status",
   "CategoryIcon": "resources/icon.png",
   "CodePath": "plugin/app.js",
@@ -11,13 +11,39 @@
   "UUID": "com.ulanzi.ulanzistudio.deckstatus",
   "Actions": [
     {
-      "Name": "Status Tile",
-      "Tooltip": "Render a deck_state source as a styled tile: agent | gauge | ring | timestat | repo. Tap resets counters.",
-      "Icon": "resources/action.png",
-      "PropertyInspectorPath": "property-inspector/inspector.html",
-      "UUID": "com.ulanzi.ulanzistudio.deckstatus.statustile",
+      "Name": "Cursor",
+      "Tooltip": "Cycle Cursor workspaces: elapsed time + status. Tap to cycle sessions.",
+      "Icon": "resources/cursorcycle.png",
+      "PropertyInspectorPath": "property-inspector/cursor.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.cursorcycle",
       "States": [
-        { "Name": "Default", "Image": "resources/action.png" }
+        { "Name": "Default", "Image": "resources/cursorcycle.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
+    },
+    {
+      "Name": "Commander Sprint",
+      "Tooltip": "Running sprint progress (done/total). Tap cycles active sprints. Random icon per project.",
+      "Icon": "resources/sprint.png",
+      "PropertyInspectorPath": "property-inspector/commander.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.sprint",
+      "States": [
+        { "Name": "Default", "Image": "resources/sprint.png" }
+      ],
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Devices": []
+    },
+    {
+      "Name": "Claude (cycle)",
+      "Tooltip": "Cycle Claude Code sessions (idle skipped). Elapsed time + status. Tap to cycle.",
+      "Icon": "resources/claudecycle.png",
+      "PropertyInspectorPath": "property-inspector/claudecycle.html",
+      "UUID": "com.ulanzi.ulanzistudio.deckstatus.claudecycle",
+      "States": [
+        { "Name": "Default", "Image": "resources/claudecycle.png" }
       ],
       "SupportedInMultiActions": false,
       "Controllers": ["Keypad"],
@@ -37,58 +63,6 @@
       "Devices": []
     },
     {
-      "Name": "Claude Session",
-      "Tooltip": "One key = one Claude Code session/project. blue=working, green=ready, amber=needs you.",
-      "Icon": "resources/claudecode.png",
-      "PropertyInspectorPath": "property-inspector/claudecode.html",
-      "UUID": "com.ulanzi.ulanzistudio.deckstatus.claudecode",
-      "States": [
-        { "Name": "Default", "Image": "resources/claudecode.png" }
-      ],
-      "SupportedInMultiActions": false,
-      "Controllers": ["Keypad"],
-      "Devices": []
-    },
-    {
-      "Name": "Claude (cycle)",
-      "Tooltip": "Scan all Claude Code sessions on one key; tap to cycle through them.",
-      "Icon": "resources/claudecycle.png",
-      "PropertyInspectorPath": "property-inspector/claudecycle.html",
-      "UUID": "com.ulanzi.ulanzistudio.deckstatus.claudecycle",
-      "States": [
-        { "Name": "Default", "Image": "resources/claudecycle.png" }
-      ],
-      "SupportedInMultiActions": false,
-      "Controllers": ["Keypad"],
-      "Devices": []
-    },
-    {
-      "Name": "Commander Sprint",
-      "Tooltip": "Commander sprint progress per project (done/total, nav-pill API). Tap cycles tracked project.",
-      "Icon": "resources/sprint.png",
-      "PropertyInspectorPath": "property-inspector/commander.html",
-      "UUID": "com.ulanzi.ulanzistudio.deckstatus.sprint",
-      "States": [
-        { "Name": "Default", "Image": "resources/sprint.png" }
-      ],
-      "SupportedInMultiActions": false,
-      "Controllers": ["Keypad"],
-      "Devices": []
-    },
-    {
-      "Name": "Commander Agents",
-      "Tooltip": "Commander coder/tester agents + issue#; tap to cycle through them.",
-      "Icon": "resources/cmdagents.png",
-      "PropertyInspectorPath": "property-inspector/commander.html",
-      "UUID": "com.ulanzi.ulanzistudio.deckstatus.cmdagents",
-      "States": [
-        { "Name": "Default", "Image": "resources/cmdagents.png" }
-      ],
-      "SupportedInMultiActions": false,
-      "Controllers": ["Keypad"],
-      "Devices": []
-    },
-    {
       "Name": "GitHub API Usage",
       "Tooltip": "GitHub REST API rate-limit usage % for the hourly window. Tap to refresh.",
       "Icon": "resources/ghrate.png",
@@ -96,19 +70,6 @@
       "UUID": "com.ulanzi.ulanzistudio.deckstatus.ghrate",
       "States": [
         { "Name": "Default", "Image": "resources/ghrate.png" }
-      ],
-      "SupportedInMultiActions": false,
-      "Controllers": ["Keypad"],
-      "Devices": []
-    },
-    {
-      "Name": "Cursor",
-      "Tooltip": "Cursor IDE: active workspace when busy (hooks), AI snippet count when idle. Tap to cycle sessions.",
-      "Icon": "resources/cursorcycle.png",
-      "PropertyInspectorPath": "property-inspector/cursor.html",
-      "UUID": "com.ulanzi.ulanzistudio.deckstatus.cursorcycle",
-      "States": [
-        { "Name": "Default", "Image": "resources/cursorcycle.png" }
       ],
       "SupportedInMultiActions": false,
       "Controllers": ["Keypad"],
