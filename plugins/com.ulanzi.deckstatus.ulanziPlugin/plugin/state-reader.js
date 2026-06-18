@@ -181,6 +181,65 @@ export async function readSprintProgress(base, repo) {
   };
 }
 
+// Running sprints only — for the sprint cycle tile (home + sprint-status + progress).
+export async function readRunningSprints(base) {
+  const [home, sprintStatus] = await Promise.all([
+    fetchJson(`${base}/api/home`),
+    fetchJson(`${base}/api/sprint-status`),
+  ]);
+  if (!home || !Array.isArray(home.projects)) return { offline: true, sprints: [] };
+
+  const runningByRepo = new Map();
+  for (const rs of sprintStatus?.running_sprints || []) {
+    runningByRepo.set(String(rs.project || ''), rs);
+  }
+
+  const candidates = home.projects.filter((p) => {
+    const repo = String(p.repo || '');
+    const status = String(p.status || 'idle');
+    return status === 'running' || runningByRepo.has(repo) || !!p.sprint_running;
+  });
+
+  const progs = await Promise.all(
+    candidates.map((p) => readSprintProgress(base, String(p.repo || '')).then((prog) => ({ p, prog }))),
+  );
+
+  const sprints = [];
+  for (const { p, prog } of progs) {
+    if (prog.offline) continue;
+    const repo = String(p.repo || '');
+    const slug = String(p.slug || '');
+    const status = String(p.status || 'idle');
+    const sr = p.sprint_running || {};
+    const rs = runningByRepo.get(repo);
+    const elapsed = Number(sr.elapsed_sec) || Number(rs?.wall_clock_secs) || 0;
+    const done = prog.done ?? 0;
+    const total = prog.total ?? 0;
+    const runState = prog.runState || (status === 'running' || rs ? 'running' : '');
+    let state = 'idle';
+    if (runState === 'finished' || (total > 0 && done >= total)) state = 'completed';
+    else if (runState === 'running' || status === 'running' || rs) state = 'working';
+    if (state === 'idle' && !prog.hasSprint) continue;
+
+    sprints.push({
+      slug,
+      repo,
+      name: String(p.name || slug),
+      sprint: prog.sprint ?? 0,
+      done,
+      total,
+      runState,
+      state,
+      runningSec: elapsed,
+      runningTime: formatAge(elapsed),
+    });
+  }
+
+  const rank = { working: 0, completed: 1, idle: 2 };
+  sprints.sort((a, b) => (rank[a.state] ?? 9) - (rank[b.state] ?? 9) || a.slug.localeCompare(b.slug));
+  return { offline: false, sprints };
+}
+
 // /api/agents -> { offline, agents: [...] }. Commander agents that are CURRENTLY
 // relevant only: working now, or seen in the last AGENT_FRESH_SEC. The endpoint
 // returns the full historical table, so without this filter you'd cycle dozens

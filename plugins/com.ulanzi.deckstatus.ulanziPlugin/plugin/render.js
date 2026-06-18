@@ -299,13 +299,22 @@ function sessionTruncate(s, max) {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
-export function renderTile({ value, color, label }) {
+export function renderTile({ value, color, label, glyph: gname, state, pulse = 1 }) {
   const a = sessionAccent(color);
   const fs = sessionValueFontSize(value);
   const hasLabel = label && String(label).trim();
+  let glyphColor = a;
+  let glyphAlpha = 1;
+  if (state === 'idle') { glyphAlpha = 0.32; }
+  else if (state === 'done') { glyphColor = COLORS.green; }
+  else if (state === 'running') { glyphAlpha = 0.55 + 0.45 * pulse; }
+  const glyphEl = gname
+    ? glyph(gname, SIZE - 34, 36, 44, glyphColor, glyphAlpha)
+    : '';
   const body = [
     `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="${SESSION_BG}"/>`,
     `<rect x="0" y="0" width="${SIZE}" height="18" fill="${a}"/>`,
+    glyphEl,
     hasLabel ? sessionTextShadow(sessionTruncate(String(label), 18), SIZE / 2, SESSION_LABEL_Y, SESSION_LABEL_SIZE, '600', '#cfcfd6') : '',
     sessionTextShadow(String(value), SIZE / 2, SESSION_VALUE_Y, fs, '700', SESSION_TEXT),
   ].join('');

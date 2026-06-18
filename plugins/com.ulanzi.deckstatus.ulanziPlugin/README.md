@@ -1,117 +1,54 @@
 # Deck Status — UlanziDeck plugin
 
-Renders live status onto Ulanzi D200 keys. **Dedicated actions** poll Commander,
-Claude Code, Cursor, GitHub, and git directly. The generic **Status Tile** action
-reads hand-written `deck_state/tile_<name>.json` or `.txt` files (tap resets
-`*_count.txt` counters).
+Renders live status onto Ulanzi D200 keys. Five actions:
+
+| Action | What it shows |
+|--------|----------------|
+| **Cursor** | Cycle Cursor hook sessions — elapsed time, status, logo. Tap to cycle. |
+| **Commander Sprint** | Running sprint `done/total`. Random icon per project. Tap to cycle. |
+| **Claude (cycle)** | Cycle Claude sessions (idle skipped). Tap to cycle. |
+| **Antigravity** | Latest git commit hash + age for a project path. Tap opens IDE. |
+| **GitHub API Usage** | `gh` rate-limit % with meter bar. Tap to refresh. |
 
 - **Type:** Node.js main service (`plugin/app.js`), Node v20, SDK protocol V2.1.2, Ulanzi Studio 3.0.11+
-- **Rendering:** pure-JS SVG → base64 data URL → `setBaseDataIcon` (no canvas/PNG dependency)
+- **Rendering:** pure-JS SVG → base64 data URL → `setBaseDataIcon`
 - **Only dependency:** `ws`
 
-## File formats (Status Tile, under STATE_DIR default `~/dev/deck/scripts/deck_state`)
+## Session tiles (Cursor / Claude / Sprint)
 
-| Binding (`source`) | Resolves to | Shown |
-|---|---|---|
-| `test` | `tile_test.json` then `.txt` | `value` + accent from `color` |
-| `my_count.txt` | direct `*count.txt` path | integer; tap resets to `0` |
-| `sub/foo.json` | direct relative path | `value` + `color` |
+196×196 SVG with accent bar, status label, big value (time or `done/total`), and brand logo top-right (same position as GitHub gauge). Host text overlay: two lines (project + role/slug).
 
-`tile_<name>.json` = `{"value","color","state","label"}`. `color` ∈
-`green|amber|red|blue|grey` (default grey). A `.txt` whose value is `0`/empty,
-or a missing file, renders a dim neutral `0`/`—` tile.
+Data sources:
+- `deck_state/cursor_sessions/*.json` — Cursor hooks
+- `deck_state/cc_sessions/*.json` — Claude Code hooks
+- Commander `/api/home` + `/api/sprint-status` + `/api/sprint-progress`
 
-## Status Tile styles (rich render engine)
+## Antigravity
 
-The **Status Tile** action renders a `deck_state` source in one of five archetypes
-(196×196 SVG, dark `#191a1d` base, bundled Tabler glyphs — no runtime fetch):
+Bind a key to a **project path** (git repo). Shows latest commit short hash and age, recomputed every ~30s. Accent fades green → grey over 30 minutes. Tap opens Antigravity IDE.
 
-| `style` | Look |
-|---------|------|
-| `agent` | radial accent glow + hero glyph; top-right count/✓ badge; running→pulsing glyph, error→red, done→green check, idle→dim no-glow |
-| `gauge` | glyph + big `%` + bottom meter bar; color green>50 / amber 20–50 / red<20 unless `color` overrides |
-| `ring`  | progress ring (accent arc = `count` "done/total" or `value` %) + centered text |
-| `timestat` | glyph + big short value (e.g. `14m`) + state label; color by state |
-| `repo`  | dim grey glyph + mono label (recedes) |
+PI field: **Project path** (e.g. `~/dev/commander/prd`). Persisted to `deck_state/antigravity_project.txt`.
 
-PI fields: `source`, `style`, `accent` (green/teal/blue/purple/amber/red/grey),
-`glyph` (Tabler name), `label`, `is_counter` (tap resets the count file), `state_dir`.
-File JSON drives the live data: `{"value","color","state","label","count"}` (any subset);
-`state` ∈ `running|done|error|idle` overrides color. `count` `"1/2"` feeds the ring/badge.
-Running `agent`/`timestat` tiles repaint every 700ms to animate the pulse.
+## Commander Sprint
 
-## Action: "Antigravity" (Keypad, all devices)
-
-Bind a key to a **project path** (a git repo). The tile shows that repo's latest
-commit **short hash** and **how long since it** (e.g. `5d4500e` / `6m ago`),
-recomputed via `git -C <path> log -1` every ~30s. Accent color by recency:
-green < 1h, amber < 1d, grey older. Not a repo / bad path → dim `—` `no repo`.
-Tap the key to refresh immediately. Self-contained — needs no counter file or
-git hook.
-
-Property Inspector field: **Project path** (absolute or `~`, e.g.
-`~/dev/commander/prd`).
-
-## Action: "Status Tile" (Keypad, all devices)
-
-Property Inspector fields:
-- **Source** — tile name or relative path (datalist suggests the common ones).
-- **State dir** — override STATE_DIR (supports `~`). Blank = default.
-
-Each active key polls its bound file every ~2s (debounced; overlapping reads
-skipped). Reads are wrapped in try/catch — a missing/locked/partial file just
-skips that cycle, never crashes. Tap = reset if bound to a counter, else force
-an immediate refresh. Polling stops on deactivate/clear.
+PI field: **Dashboard URL** per key (e.g. `http://100.103.104.41:8000`). Saved in `deck_state/commander_keys.json`. Blank = `http://127.0.0.1:8001`.
 
 ## Install into Ulanzi Studio (macOS)
-
-Copy the plugin folder into the UlanziDeck plugins directory, then restart
-Ulanzi Studio:
 
 ```
 ~/Library/Application Support/Ulanzi/UlanziDeck/Plugins/com.ulanzi.deckstatus.ulanziPlugin
 ```
 
-(Ship `node_modules/ws` with it, or run `npm install` inside the installed
-folder.) The host launches `plugin/app.js` with Node and passes the WebSocket
-address/port/lang as `process.argv[2..4]`.
+Run `npm install` inside the plugin folder if `node_modules/ws` is missing. Restart Ulanzi Studio after copying.
 
-## Run the main service for the simulator
-
-The simulator does **not** auto-start Node main services — run it yourself:
+## Run for simulator
 
 ```bash
-cd "com.ulanzi.deckstatus.ulanziPlugin"
-npm install            # first time only (installs ws)
-node plugin/app.js     # connects to 127.0.0.1:3906 by default
+cd plugins/com.ulanzi.deckstatus.ulanziPlugin
+npm install
+node plugin/app.js
 ```
-
-Simulator UI: <http://127.0.0.1:39069> (copy the plugin into
-`UlanziDeckSimulator/plugins/`, click *Refresh Plugin List*, drag the action
-onto a key).
-
-## Debug in the desktop app
-
-```bash
-open /Applications/Ulanzi\ Studio.app --args --log --nodeRemoteDebug
-```
-
-Then open `chrome://inspect` in Chrome, find this plugin, click *inspect*.
-Logs also go to the plugin log file via `$UD.logMessage`.
-
-## Test (green "9" → flip)
-
-1. A test tile already exists: `~/dev/deck/scripts/deck_state/tile_test.json`
-   = `{"value":"9","color":"green"}`.
-2. In the simulator/app, add **Status Tile** to a key, open its Property
-   Inspector, set **Source** = `test`. The key shows a green **9**.
-3. Flip it and watch the key update within ~2s:
-   ```bash
-   printf '%s' '{"value":"3","color":"red"}' > ~/dev/deck/scripts/deck_state/tile_test.json
-   ```
 
 ## License
 
-Apache-2.0. Built on the UlanziDeckPlugin-SDK (`plugin-common-node`,
-`libs/`), which is licensed Apache-2.0 — see SDK `LICENSE`. Keep the SDK
-notices intact when redistributing.
+Apache-2.0

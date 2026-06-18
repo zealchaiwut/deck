@@ -1,23 +1,24 @@
 // app.js — Deck Status main service.
 //
-// Two actions, both Keypad:
-//   "Status Tile" — bind a key to a deck_state file (tile name or relative path)
-//                   and show its live value/color. Tap a *count.txt to reset it.
-//   "Antigravity" — bind a key to a project path; show that git repo's latest
-//                   commit short hash + how long since it. Tap to refresh.
+// Five keypad actions:
+//   Cursor            — cycle hook sessions (running time + state)
+//   Commander Sprint  — running sprint done/total; tap cycles projects
+//   Claude (cycle)    — cycle Claude sessions (idle skipped)
+//   Antigravity       — latest git commit age for a project path
+//   GitHub API Usage  — gh rate-limit gauge
 //
-// Each active key gets its own poll loop. Reads are best-effort: a missing file,
-// non-repo path, or partial read just renders a dim neutral tile, never crashes.
+// Each active key polls on its own interval. Reads are best-effort — missing
+// data renders a dim neutral tile, never crashes.
 
 import UlanziApi from './plugin-common-node/index.js';
 import {
-  readSource, resetCounter, resolveStateDir, readProjectCommit,
+  resolveStateDir, readProjectCommit,
   readProjectConfig, writeProjectConfig, DEFAULT_PROJECT,
-  readClaudeSessionList, readSessionList, readKeyMap,
+  readSessionList,
   readActiveSessionList, sessionDurationText,
   sessionRole, sessionDisplayProject,
   readCommanderApi, readCommanderKeyEntry, writeCommanderKey, writeCommanderProjectRepo,
-  readCommanderProjects, readSprintProgress, readCommanderAgents, readGithubRate, readCursorAiActivity,
+  readRunningSprints, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
 import { render as renderStyle, renderMissing, renderTile, renderNeutral } from './render.js';
 import { appendFileSync, watch, existsSync } from 'fs';
@@ -27,24 +28,20 @@ import path from 'path';
 import { expandPath } from './state-reader.js';
 
 const PLUGIN_UUID = 'com.ulanzi.ulanzistudio.deckstatus';
-const ACTION_STATUSTILE = 'com.ulanzi.ulanzistudio.deckstatus.statustile';
 const ACTION_ANTIGRAVITY = 'com.ulanzi.ulanzistudio.deckstatus.antigravity';
 const PULSE_MS = 700; // running-state glyph pulse cadence
-const ACTION_CLAUDECODE = 'com.ulanzi.ulanzistudio.deckstatus.claudecode';
 const ACTION_CLAUDECYCLE = 'com.ulanzi.ulanzistudio.deckstatus.claudecycle';
 const ACTION_SPRINT = 'com.ulanzi.ulanzistudio.deckstatus.sprint';
-const ACTION_CMDAGENTS = 'com.ulanzi.ulanzistudio.deckstatus.cmdagents';
 const ACTION_GHRATE = 'com.ulanzi.ulanzistudio.deckstatus.ghrate';
 const ACTION_CURSORCYCLE = 'com.ulanzi.ulanzistudio.deckstatus.cursorcycle';
 
-const FILE_POLL_MS = 2000;      // deck_state files change often
 const COMMIT_POLL_MS = 30000;   // git age only needs ~minute resolution
-const SESSION_POLL_MS = 1500;   // Claude Code status should feel responsive
+const SESSION_POLL_MS = 1500;   // Claude/Cursor hook sessions
 const COMMANDER_POLL_MS = 4000; // dashboard API; don't hammer it
 const GHRATE_POLL_MS = 60000;   // rate limit is a slow gauge (hourly window)
 
-const COMMANDER_ACTIONS = new Set([ACTION_SPRINT, ACTION_CMDAGENTS]);
 const CURSOR_ACTIONS = new Set([ACTION_CURSORCYCLE]);
+const SPRINT_GLYPHS = ['rocket', 'sparkles', 'calendar', 'code', 'activity', 'clock', 'git-branch'];
 
 const $UD = new UlanziApi();
 const INSTANCES = new Map(); // context -> instance
@@ -94,37 +91,20 @@ function ageColor(sec) {
   return toHex(COLOR_STOPS[COLOR_STOPS.length - 1][1]); // > 30m -> grey
 }
 
-// --- Status Tile: rich style-based render (agent|gauge|ring|timestat|repo) ----
-// Merges PI settings (style/accent/glyph/label/is_counter) with live file data
-// (value/color/state/label/count). pulse alpha animates "running" glyphs.
-async function statusTileIcon(inst) {
-  const read = await readSource(inst.stateDir, inst.source);
-  inst.lastRead = read;
-  // running styles pulse; (de)arm the 700ms redraw timer accordingly.
-  const isRunning = !read.missing && read.state === 'running';
-  managePulse(inst, isRunning && (inst.style === 'agent' || inst.style === 'timestat'));
+function pulseValue(inst) {
+  return (Math.sin((inst.pulsePhase || 0) * 0.9) + 1) / 2;
+}
 
-  if (read.missing) return renderMissing(inst.label);
+function sprintGlyphForSlug(slug) {
+  let h = 0;
+  for (let i = 0; i < slug.length; i++) h = (Math.imul(31, h) + slug.charCodeAt(i)) >>> 0;
+  return SPRINT_GLYPHS[h % SPRINT_GLYPHS.length];
+}
 
-  // count "1/2" -> done/total for the ring style.
-  const count = read.count || (inst.isCounter ? read.value : '');
-  let done, total;
-  const m = /^(\d+)\s*\/\s*(\d+)$/.exec(String(count));
-  if (m) { done = +m[1]; total = +m[2]; }
-
-  const pulse = (Math.sin((inst.pulsePhase || 0) * 0.9) + 1) / 2; // 0..1
-  const data = {
-    accent: read.accent || inst.accent || 'grey',
-    glyph: inst.glyph,
-    label: read.label || inst.label,
-    state: read.state,
-    count,
-    done, total,
-    value: read.value,
-    color: read.color, // gauge threshold override
-    pulse,
-  };
-  return renderStyle(inst.style || 'agent', data);
+function sprintAccent(s) {
+  if (s.state === 'completed') return 'green';
+  if (s.state === 'working') return 'teal';
+  return 'grey';
 }
 
 function managePulse(inst, on) {
@@ -177,7 +157,8 @@ function agentFor(sess) {
 
 // Slope-safe session tile: accent bar + duration (big) + status (top).
 // Host text overlay: line 1 = project (or "-"), line 2 = role.
-function renderSessionTile(sess, { idx = 0, total = 1 } = {}) {
+// Logo top-right — same position as agent/gauge tiles (renderAgent).
+function renderSessionTile(sess, { idx = 0, total = 1, glyph = null, pulse = 1 } = {}) {
   const A = agentFor(sess);
   const pos = total > 1 ? ` ${idx + 1}/${total}` : '';
   const project = sessionDisplayProject(sess);
@@ -185,7 +166,30 @@ function renderSessionTile(sess, { idx = 0, total = 1 } = {}) {
   const dur = sessionDurationText(sess);
   const top = `${A.word}${pos}`;
   const text = `${project}\n${role}`;
-  return { icon: renderTile({ value: dur, color: A.accent, label: top }), text };
+  return {
+    icon: renderTile({
+      value: dur, color: A.accent, label: top, glyph, state: A.state, pulse,
+    }),
+    text,
+  };
+}
+
+function renderSprintTile(s, { idx = 0, total = 1, glyph = null, pulse = 1 } = {}) {
+  const pos = total > 1 ? ` ${idx + 1}/${total}` : '';
+  const top = s.sprint ? `S${s.sprint} · ${s.state}${pos}` : `${s.state}${pos}`;
+  const value = s.total > 0 ? `${s.done}/${s.total}` : '—';
+  const runState = s.state === 'working' ? 'running' : s.state === 'completed' ? 'done' : 'idle';
+  return {
+    icon: renderTile({
+      value,
+      color: sprintAccent(s),
+      label: top,
+      glyph,
+      state: runState,
+      pulse,
+    }),
+    text: `${s.slug}\nrunning ${s.runningTime || '0'}`,
+  };
 }
 
 function tileMissing(label) {
@@ -204,48 +208,11 @@ function dedupeByCwd(list) {
   return [...by.values()];
 }
 
-function matchesFilter(sess, filter) {
-  const f = filter.toLowerCase();
-  return sess.label.toLowerCase().includes(f) || sess.cwd.toLowerCase().includes(f);
-}
-
-// Among matches, surface the most "active" one: working > waiting > live-idle > done > idle.
-function pickSession(list, filter) {
-  const m = list.filter((s) => matchesFilter(s, filter));
-  if (!m.length) return null;
-  const rank = (s) => {
-    if (s.stale) return 0;
-    if (s.state === 'working') return 5;
-    if (s.state === 'waiting') return 4;
-    if (s.state === 'idle' && s.live) return 3;
-    if (s.state === 'done') return 2;
-    return 1;
-  };
-  return m.sort((a, b) => rank(b) - rank(a) || a.ageSec - b.ageSec)[0];
-}
-
-// Per-key mapped tile: one deck key dedicated to one session/project.
-async function claudeMappedIcon(inst) {
-  const list = await readClaudeSessionList(inst.stateDir);
-  const keyMap = await readKeyMap(inst.stateDir);
-  const filter = (keyMap[inst.keyId] || inst.filter || '').trim();
-  dbg(`render claudecode ctx=${inst.context} key=${inst.keyId} filter="${filter}" sessions=${list.length}`);
-  if (!filter) {
-    // Unmapped: show this key's id so you can add it to cc_keys.json.
-    return tileMissing(`map ${inst.keyId}`);
-  }
-  const sess = pickSession(list, filter);
-  if (!sess) {
-    const t = `${filter}\n—\nidle`;
-    return { icon: renderNeutral({ value: '—', label: `${filter} · idle` }), text: t };
-  }
-  return renderSessionTile(sess);
-}
-
 // Cycling tile: one key scans active sessions in a subdir; tap advances.
-async function sessionCycleIcon(inst, subdir, emptyLabel) {
+async function sessionCycleIcon(inst, subdir, emptyLabel, { skipIdle = false, glyph = null } = {}) {
   const { list: raw, anyFiles } = await readActiveSessionList(inst.stateDir, subdir);
-  const list = dedupeByCwd(raw);
+  let list = dedupeByCwd(raw);
+  if (skipIdle) list = list.filter((s) => s.state !== 'idle');
   inst.cycleList = list; // for onRun bounds
   if (!list.length) return tileMissing(anyFiles ? 'no active' : emptyLabel);
   const idx = ((inst.cycleIdx || 0) % list.length + list.length) % list.length;
@@ -253,7 +220,7 @@ async function sessionCycleIcon(inst, subdir, emptyLabel) {
   const A = agentFor(sess);
   managePulse(inst, A.state === 'running');
   dbg(`render cycle ${subdir} ctx=${inst.context} idx=${idx}/${list.length} label=${sess.label} ${A.word} dur=${sessionDurationText(sess)}`);
-  return renderSessionTile(sess, { idx, total: list.length });
+  return renderSessionTile(sess, { idx, total: list.length, glyph, pulse: pulseValue(inst) });
 }
 
 // --- Cursor: unified tile (hook sessions + AI snippet fallback) --------------
@@ -279,7 +246,9 @@ async function cursorIcon(inst) {
     const A = agentFor(sess);
     managePulse(inst, A.state === 'running');
     dbg(`render cursor ctx=${inst.context} idx=${idx}/${sorted.length} label=${sess.label} ${A.word}`);
-    return renderSessionTile(sess, { idx, total: sorted.length });
+    return renderSessionTile(sess, {
+      idx, total: sorted.length, glyph: 'brand-cursor', pulse: pulseValue(inst),
+    });
   }
 
   managePulse(inst, false);
@@ -289,8 +258,9 @@ async function cursorIcon(inst) {
   managePulse(inst, gen);
   dbg(`render cursor idle today=${a.today} recent=${a.recent}`);
   return renderStyle('agent', {
-    accent: gen ? 'teal' : 'grey', glyph: 'pointer', value: String(a.today),
+    accent: gen ? 'teal' : 'grey', glyph: 'brand-cursor', value: String(a.today),
     label: gen ? `+${a.recent} now` : 'today', state: gen ? 'running' : 'idle',
+    pulse: pulseValue(inst),
   });
 }
 
@@ -303,74 +273,43 @@ async function resolveCommanderBase(inst) {
   return readCommanderApi(inst.stateDir);
 }
 
-function defaultProjectIdx(projects, persistedRepo) {
+function defaultSprintIdx(sprints, persistedRepo) {
   if (persistedRepo) {
-    const i = projects.findIndex((p) => p.repo === persistedRepo);
+    const i = sprints.findIndex((s) => s.repo === persistedRepo);
     if (i >= 0) return i;
   }
-  const ri = projects.findIndex((p) => p.status === 'running');
-  return ri >= 0 ? ri : 0;
+  const wi = sprints.findIndex((s) => s.state === 'working');
+  return wi >= 0 ? wi : 0;
 }
 
-async function initSprintProjectIdx(inst, projects) {
+async function initSprintCycleIdx(inst, sprints) {
   if (inst.cycleIdx != null) return;
   const entry = await readCommanderKeyEntry(inst.stateDir, inst.keyId);
-  inst.cycleIdx = defaultProjectIdx(projects, entry.projectRepo);
+  inst.cycleIdx = defaultSprintIdx(sprints, entry.projectRepo);
 }
 
-// --- Commander: sprint progress (nav-pill API, per-project) ------------------
+// --- Commander: running sprint cycle (nav-pill API) --------------------------
 async function sprintIcon(inst) {
   const base = await resolveCommanderBase(inst);
-  const home = await readCommanderProjects(base);
-  if (home.offline) { inst.cycleList = []; return renderMissing('offline'); }
-  if (!home.projects.length) { inst.cycleList = []; return renderMissing('no projects'); }
+  const { offline, sprints } = await readRunningSprints(base);
+  if (offline) { inst.cycleList = []; return tileMissing('offline'); }
 
-  inst.cycleList = home.projects;
-  await initSprintProjectIdx(inst, home.projects);
-  const n = home.projects.length;
-  const idx = ((inst.cycleIdx || 0) % n + n) % n;
-  inst.cycleIdx = idx;
-  const proj = home.projects[idx];
-  const pos = n > 1 ? ` ${idx + 1}/${n}` : '';
-
-  const prog = await readSprintProgress(base, proj.repo);
-  if (prog.offline) { inst.cycleList = []; return renderMissing('offline'); }
-  if (!prog.hasSprint) {
-    dbg(`render sprint ctx=${inst.context} ${proj.slug} no sprint`);
-    return renderStyle('fill', { accent: 'grey', pct: 0, value: '—', slug: proj.slug, pos: pos.trim() || undefined });
+  inst.cycleList = sprints;
+  if (!sprints.length) {
+    managePulse(inst, false);
+    dbg(`render sprint ctx=${inst.context} no running sprints`);
+    return tileMissing('no sprint');
   }
 
-  const { done, total, sprint, runState } = prog;
-  const complete = total > 0 && done >= total;
-  const pct = total > 0 ? done / total : 0;
-  const accent = complete ? 'green' : runState === 'finished' ? 'green' : 'teal';
-  dbg(`render sprint ctx=${inst.context} idx=${idx}/${n} ${proj.slug} S${sprint} ${done}/${total}`);
-  return renderStyle('fill', {
-    accent, pct, value: `${done}/${total}`, slug: proj.slug, sprint, pos: pos.trim() || undefined,
-  });
-}
-
-// --- Commander: agents (coder/tester) ----------------------------------------
-function agentLook(a) {
-  const st = (a.status || '').toLowerCase();
-  if (st === 'working') return { accent: 'blue', state: 'running', word: a.lastTool || 'working' };
-  if (st.includes('idle') || st.includes('timeout')) return { accent: 'grey', state: 'idle', word: 'idle' };
-  return { accent: 'green', state: 'done', word: 'done' };
-}
-
-async function cmdAgentsIcon(inst) {
-  const base = await resolveCommanderBase(inst);
-  const { offline, agents } = await readCommanderAgents(base);
-  inst.cycleList = agents; // for onRun bounds
-  if (offline) return renderMissing('offline');
-  if (!agents.length) return renderMissing('no agents');
-  const idx = ((inst.cycleIdx || 0) % agents.length + agents.length) % agents.length;
-  const a = agents[idx];
-  const look = agentLook(a);
-  const pos = agents.length > 1 ? ` ${idx + 1}/${agents.length}` : '';
-  dbg(`render cmdagents ctx=${inst.context} idx=${idx}/${agents.length} ${a.role} ${a.issue} ${look.word}`);
-  // value = role, title (top) = issue# (or status word) + position. glyph = code.
-  return renderStyle('agent', { accent: look.accent, glyph: 'code', value: a.role, label: (a.issue || look.word) + pos, state: look.state });
+  await initSprintCycleIdx(inst, sprints);
+  const n = sprints.length;
+  const idx = ((inst.cycleIdx || 0) % n + n) % n;
+  inst.cycleIdx = idx;
+  const s = sprints[idx];
+  const glyph = sprintGlyphForSlug(s.slug);
+  managePulse(inst, s.state === 'working');
+  dbg(`render sprint ctx=${inst.context} idx=${idx}/${n} ${s.slug} S${s.sprint} ${s.done}/${s.total}`);
+  return renderSprintTile(s, { idx, total: n, glyph, pulse: pulseValue(inst) });
 }
 
 // --- GitHub: REST API rate-limit usage % -------------------------------------
@@ -393,17 +332,17 @@ async function computeIcon(inst) {
   if (inst.type === ACTION_GHRATE) return ghRateIcon();
   if (CURSOR_ACTIONS.has(inst.type)) return cursorIcon(inst);
   if (inst.type === ACTION_SPRINT) return sprintIcon(inst);
-  if (inst.type === ACTION_CMDAGENTS) return cmdAgentsIcon(inst);
-  if (inst.type === ACTION_CLAUDECODE) return claudeMappedIcon(inst);
-  if (inst.type === ACTION_CLAUDECYCLE) return sessionCycleIcon(inst, 'cc_sessions', 'no claude');
+  if (inst.type === ACTION_CLAUDECYCLE) {
+    return sessionCycleIcon(inst, 'cc_sessions', 'no claude', { skipIdle: true, glyph: 'brand-claude' });
+  }
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.resolvedProject = await resolveProject(inst);
     inst.lastRead = await readProjectCommit(inst.resolvedProject);
     dbg(`render antigravity ctx=${inst.context} project="${inst.resolvedProject}" read=${JSON.stringify(inst.lastRead)}`);
     return commitIcon(inst.lastRead);
   }
-  // Status Tile (and any unspecified action) -> rich style renderer.
-  return statusTileIcon(inst);
+  log(`unknown action type ${inst.type}`, 'warn');
+  return renderMissing('?');
 }
 
 async function renderInstance(inst) {
@@ -426,6 +365,7 @@ async function renderInstance(inst) {
   }
   ensureGitWatch(inst);
   ensureCursorWatch(inst);
+  ensureClaudeWatch(inst);
 }
 
 // Watch the repo's reflog so a new commit forces an immediate hard refresh —
@@ -487,6 +427,33 @@ function closeCursorWatch(inst) {
   inst.watchCursorDir = '';
 }
 
+function ensureClaudeWatch(inst) {
+  if (inst.type !== ACTION_CLAUDECYCLE || !inst.stateDir) return;
+  const dir = path.join(inst.stateDir, 'cc_sessions');
+  if (inst.watchClaudeDir === dir && inst.claudeWatcher) return;
+  closeClaudeWatch(inst);
+  if (!existsSync(dir)) return;
+  try {
+    inst.claudeWatcher = watch(dir, () => {
+      if (inst.claudeWatchDebounce) clearTimeout(inst.claudeWatchDebounce);
+      inst.claudeWatchDebounce = setTimeout(() => {
+        inst.lastIcon = '';
+        renderInstance(inst);
+      }, 300);
+    });
+    inst.watchClaudeDir = dir;
+    dbg(`watching ${dir}`);
+  } catch (e) {
+    dbg(`claude watch failed for ${dir}: ${e.message}`);
+  }
+}
+
+function closeClaudeWatch(inst) {
+  if (inst.claudeWatcher) { try { inst.claudeWatcher.close(); } catch {} inst.claudeWatcher = null; }
+  if (inst.claudeWatchDebounce) { clearTimeout(inst.claudeWatchDebounce); inst.claudeWatchDebounce = null; }
+  inst.watchClaudeDir = '';
+}
+
 function startPolling(inst) {
   stopPolling(inst);
   inst.timer = setInterval(() => { renderInstance(inst); }, inst.intervalMs);
@@ -495,6 +462,7 @@ function startPolling(inst) {
 function stopPolling(inst) {
   closeWatch(inst);
   closeCursorWatch(inst);
+  closeClaudeWatch(inst);
   if (inst.pulseTimer) { clearInterval(inst.pulseTimer); inst.pulseTimer = null; }
   if (inst.timer) { clearInterval(inst.timer); inst.timer = null; }
 }
@@ -507,12 +475,10 @@ function applySettings(inst, settings) {
     inst.intervalMs = GHRATE_POLL_MS; // zero-config; gh handles auth
     return;
   }
-  if (COMMANDER_ACTIONS.has(inst.type)) {
+  if (inst.type === ACTION_SPRINT) {
     inst.intervalMs = COMMANDER_POLL_MS;
     inst.stateDir = resolveStateDir(settings);
     inst.keyId = ($UD.decodeContext(inst.context) || {}).key || '?';
-    // A URL set in the Ulanzi PI persists PER KEY (commander_keys.json), so one
-    // key can point at localhost and another at a remote machine.
     if ('apiBase' in settings) {
       inst.apiBase = String(settings.apiBase || '').trim();
       if (inst.apiBase) {
@@ -520,47 +486,32 @@ function applySettings(inst, settings) {
           .then((ok) => dbg(`persisted key ${inst.keyId} -> ${inst.apiBase} (${ok})`));
       }
     }
-    return; // base resolved per render via resolveCommanderBase
+    return;
   }
-  if (inst.type === ACTION_CLAUDECODE || inst.type === ACTION_CLAUDECYCLE || CURSOR_ACTIONS.has(inst.type)) {
+  if (inst.type === ACTION_CLAUDECYCLE || CURSOR_ACTIONS.has(inst.type)) {
     inst.intervalMs = SESSION_POLL_MS;
-    inst.stateDir = resolveStateDir(settings);          // where cc_sessions/ / cursor_sessions/ live
-    inst.keyId = ($UD.decodeContext(inst.context) || {}).key || '?'; // for cc_keys.json
-    if ('filter' in settings) inst.filter = String(settings.filter || '').trim(); // optional PI override
+    inst.stateDir = resolveStateDir(settings);
+    inst.keyId = ($UD.decodeContext(inst.context) || {}).key || '?';
     return;
   }
   if (inst.type === ACTION_ANTIGRAVITY) {
     inst.intervalMs = COMMIT_POLL_MS;
-    if (!inst.stateDir) inst.stateDir = resolveStateDir(settings); // for the config file
+    if (!inst.stateDir) inst.stateDir = resolveStateDir(settings);
     if ('projectPath' in settings) {
       inst.projectPath = String(settings.projectPath || '').trim();
-      // Funnel a path the PI sent into the config file -> authoritative & persistent.
       if (inst.projectPath) {
         writeProjectConfig(inst.stateDir, inst.projectPath)
           .then((ok) => dbg(`persisted projectPath="${inst.projectPath}" -> ${ok}`));
       }
     }
-  } else {
-    // Status Tile: source + style archetype + identity fields.
-    inst.intervalMs = FILE_POLL_MS;
-    if ('source' in settings) inst.source = String(settings.source || '').trim();
-    if ('stateDir' in settings || !inst.stateDir) inst.stateDir = resolveStateDir(settings);
-    if ('style' in settings) inst.style = String(settings.style || 'agent').trim() || 'agent';
-    if (!inst.style) inst.style = 'agent';
-    if ('accent' in settings) inst.accent = String(settings.accent || 'grey').trim() || 'grey';
-    if ('glyph' in settings) inst.glyph = String(settings.glyph || '').trim();
-    if ('label' in settings) inst.label = String(settings.label || '').trim();
-    if ('is_counter' in settings) {
-      const v = settings.is_counter;
-      inst.isCounter = v === true || v === 'true' || v === 'on';
-    }
-    if ('state_dir' in settings) inst.stateDir = resolveStateDir({ stateDir: settings.state_dir });
   }
 }
 
 // Key that detects a rebind (changed binding => force repaint).
 function bindKey(inst) {
-  return inst.type === ACTION_ANTIGRAVITY ? inst.projectPath : `${inst.stateDir}|${inst.source}`;
+  if (inst.type === ACTION_ANTIGRAVITY) return inst.projectPath || '';
+  if (inst.type === ACTION_SPRINT) return `${inst.stateDir}|${inst.apiBase || ''}|sprint`;
+  return `${inst.type}|${inst.stateDir || ''}`;
 }
 
 function ensureInstance(context, settings) {
@@ -568,7 +519,7 @@ function ensureInstance(context, settings) {
   if (!inst) {
     inst = {
       context, type: actionTypeOf(context),
-      source: '', stateDir: '', projectPath: '', intervalMs: FILE_POLL_MS,
+      stateDir: '', projectPath: '', intervalMs: SESSION_POLL_MS,
       timer: null, inflight: false, lastIcon: '', lastRead: null, active: true,
     };
     applySettings(inst, settings);
@@ -611,30 +562,22 @@ $UD.onDidReceiveSettings((msg) => {
   ensureInstance(msg.context, msg.settings || {});
 });
 
-// Tap behavior:
-//   Antigravity   -> launch/focus the Antigravity app, then refresh the commit.
-//   Status Tile   -> reset a *count.txt file if bound to one, else refresh.
+// Tap: cycle lists, open Antigravity, or refresh.
 $UD.onRun(async (msg) => {
   const inst = INSTANCES.get(msg.context) || ensureInstance(msg.context, settingsOf(msg));
   if (inst.type === ACTION_SPRINT) {
     const n = (inst.cycleList || []).length || 1;
-    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next project
+    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n;
     const repo = (inst.cycleList || [])[inst.cycleIdx]?.repo;
     if (repo) {
       writeCommanderProjectRepo(inst.stateDir, inst.keyId, repo)
         .then((ok) => dbg(`persisted project ${inst.keyId} -> ${repo} (${ok})`));
     }
-    log(`tap sprint -> project idx ${inst.cycleIdx}/${n} ${repo || '?'}`);
-  } else if (inst.type === ACTION_CMDAGENTS) {
-    const n = (inst.cycleList || []).length || 1;
-    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next agent
-    log(`tap cmdagents -> idx ${inst.cycleIdx}/${n}`);
+    log(`tap sprint -> idx ${inst.cycleIdx}/${n} ${repo || '?'}`);
   } else if (inst.type === ACTION_CLAUDECYCLE || CURSOR_ACTIONS.has(inst.type)) {
     const n = (inst.cycleList || []).length || 1;
-    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n; // advance to next session
+    inst.cycleIdx = ((inst.cycleIdx || 0) + 1) % n;
     log(`tap cycle -> idx ${inst.cycleIdx}/${n}`);
-  } else if (inst.type === ACTION_CLAUDECODE) {
-    log(`tap claudecode key=${inst.keyId} -> refresh`);
   } else if (inst.type === ACTION_ANTIGRAVITY) {
     log(`tap -> open Antigravity IDE (project=${inst.resolvedProject || '?'})`);
     // Antigravity IDE bundle id; fall back to the app name if the id ever changes.
@@ -645,13 +588,7 @@ $UD.onRun(async (msg) => {
       }
     });
   } else {
-    const read = inst.lastRead;
-    if (read && read.isCounter && read.counterPath) {
-      const ok = await resetCounter(read.counterPath);
-      log(`tap reset counter ${read.counterPath} -> ${ok ? 'ok' : 'failed'}`);
-    } else {
-      log(`tap refresh ${msg.context}`);
-    }
+    log(`tap refresh ${msg.context}`);
   }
   inst.lastIcon = ''; // force repaint
   renderInstance(inst);
