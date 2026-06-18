@@ -37,7 +37,6 @@ const ACTION_SPRINT = 'com.ulanzi.ulanzistudio.deckstatus.sprint';
 const ACTION_CMDAGENTS = 'com.ulanzi.ulanzistudio.deckstatus.cmdagents';
 const ACTION_GHRATE = 'com.ulanzi.ulanzistudio.deckstatus.ghrate';
 const ACTION_CURSORCYCLE = 'com.ulanzi.ulanzistudio.deckstatus.cursorcycle';
-const ACTION_CURSORAI = 'com.ulanzi.ulanzistudio.deckstatus.cursorai';
 
 const FILE_POLL_MS = 2000;      // deck_state files change often
 const COMMIT_POLL_MS = 30000;   // git age only needs ~minute resolution
@@ -46,7 +45,7 @@ const COMMANDER_POLL_MS = 4000; // dashboard API; don't hammer it
 const GHRATE_POLL_MS = 60000;   // rate limit is a slow gauge (hourly window)
 
 const COMMANDER_ACTIONS = new Set([ACTION_SPRINT, ACTION_CMDAGENTS]);
-const CURSOR_ACTIONS = new Set([ACTION_CURSORCYCLE, ACTION_CURSORAI]);
+const CURSOR_ACTIONS = new Set([ACTION_CURSORCYCLE]);
 
 const $UD = new UlanziApi();
 const INSTANCES = new Map(); // context -> instance
@@ -166,16 +165,6 @@ async function resolveProject(inst) {
 }
 
 // --- Claude Code session helpers ---------------------------------------------
-// Effective state of a session -> { color, word }. Stale sessions read as idle.
-function sessionLook(sess) {
-  if (!sess) return { color: 'grey', word: 'none' };
-  if (sess.stale) return { color: 'grey', word: 'idle' };
-  if (sess.state === 'working') return { color: 'blue', word: 'working' };
-  if (sess.state === 'waiting') return { color: 'amber', word: 'needs you' };
-  if (sess.state === 'done') return { color: 'green', word: 'ready' }; // done = pending next task
-  return { color: 'grey', word: 'idle' };
-}
-
 // Map a session -> agent-style fields: { accent, state(for glyph), word }.
 function agentFor(sess) {
   if (!sess || sess.stale) return { accent: 'grey', state: 'idle', word: 'idle' };

@@ -81,18 +81,7 @@ function wordSize(s) {
 
 // --- agent: radial glow; value in the MIDDLE, glyph (logo) TOP-RIGHT, title top
 // `sub` renders a second centered line below `value` (e.g. "needs you" / "1/4").
-function renderAgent({ accent, glyph: gname, label, state, count, value, sub, bg: bgColor, pulse = 1 }) {
-  // Solid status-color background variant: the whole tile is the status color
-  // and the centered text is the session name. Used by the session-cycle tile,
-  // where colour (grey idle / blue working / green ready) carries the status.
-  if (bgColor) {
-    const name = value != null && String(value).trim() !== '' ? String(value) : '—';
-    const body = [
-      `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" rx="34" fill="${hex(bgColor)}"/>`,
-      text(name, SIZE / 2, SIZE / 2 + 14, fitSize(name), '700', '#15161a'),
-    ].join('');
-    return toDataUrl(svgDoc(body));
-  }
+function renderAgent({ accent, glyph: gname, label, state, count, value, sub, pulse = 1 }) {
   const a = hex(accent);
   let glyphColor = a, glyphAlpha = 1, showGlow = true;
   if (state === 'idle') { glyphAlpha = 0.32; showGlow = false; }

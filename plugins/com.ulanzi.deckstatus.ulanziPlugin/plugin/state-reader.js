@@ -149,39 +149,6 @@ async function fetchJson(url) {
   }
 }
 
-// /api/sprint-status -> { offline, running: [{label,closed,total,wallSecs}] }.
-// sprint-status reports progress {0,0} for in-flight sprints, so when total is 0
-// we derive real closed/total from the issues carrying the sprint's exact label
-// (the int `?sprint=` filter misses sub-sprints like "sprint-66.4").
-const DONE_COL = /done|merged|approved|uat|complete|closed/i;
-export async function readSprintStatus(base) {
-  const d = await fetchJson(`${base}/api/sprint-status`);
-  if (!d) return { offline: true, running: [] };
-  const running = (d.running_sprints || []).map((s) => ({
-    label: String(s.sprint_label || '').replace(/^sprint-/, ''),
-    fullLabel: String(s.sprint_label || ''),
-    closed: s.progress?.closed ?? 0,
-    total: s.progress?.total ?? 0,
-    wallSecs: s.wall_clock_secs || 0,
-  }));
-
-  if (running.some((s) => !s.total)) {
-    const issues = await fetchJson(`${base}/api/issues`);
-    if (Array.isArray(issues)) {
-      for (const s of running) {
-        if (s.total) continue;
-        const rows = issues.filter((i) =>
-          (i.labels || []).some((l) => ((l && l.name) || l) === s.fullLabel));
-        if (rows.length) {
-          s.total = rows.length;
-          s.closed = rows.filter((i) => i.state === 'closed' || DONE_COL.test(i.column || '')).length;
-        }
-      }
-    }
-  }
-  return { offline: false, running };
-}
-
 // /api/home -> project list for tap-to-cycle tracking (URL-only PI).
 export async function readCommanderProjects(base) {
   const d = await fetchJson(`${base}/api/home`);
@@ -250,12 +217,9 @@ export async function readCommanderAgents(base) {
   return { offline: false, agents };
 }
 
-// Aggregate Claude Code session files written by cc-hook.sh into one summary.
-// Each file is deck_state/cc_sessions/<id>.json =
-//   {state,cwd,label,ts,startedAt,turnStartedAt}.
-//   working/waiting count only when fresh (a crashed session leaves a stale
-//   "working" file; we don't let it pin the light on). Very old files are
-//   deleted. Returns { working, waiting, total, waitingLabel, workingLabel }.
+// Claude Code session files written by cc-hook.sh: deck_state/cc_sessions/<id>.json
+// = {state,cwd,label,ts,startedAt,turnStartedAt}. Stale working/waiting and old
+// done/idle files are deleted on read.
 const SESSION_FRESH_SEC = 20 * 60;    // beyond this, delete working/waiting zombies
 const DONE_VISIBLE_SEC = 30 * 60;     // done sessions visible in cycle, then deleted
 const IDLE_REAP_SEC = 2 * 60 * 60;   // SessionStart idle with no prompt
@@ -311,12 +275,6 @@ export async function getLiveClaudeByCwd() {
   } catch { /* no claude running */ }
   liveProcCache = { at: now, byCwd };
   return byCwd;
-}
-
-/** @deprecated use getLiveClaudeByCwd */
-export async function getLiveClaudeCwds() {
-  const m = await getLiveClaudeByCwd();
-  return new Set(m.keys());
 }
 
 function sessionShouldReap(obj, age, liveByCwd) {
@@ -428,17 +386,6 @@ export function sessionDurationText(sess, now) {
   return formatAge(sec);
 }
 
-// Project folder under ~/dev (e.g. commander from .../dev/commander/coder).
-export function sessionProject(sess) {
-  const cwd = String(sess?.cwd || '').replace(/\/$/, '');
-  if (!cwd) return String(sess?.label || '');
-  const parts = cwd.split('/').filter(Boolean);
-  const devIdx = parts.lastIndexOf('dev');
-  if (devIdx >= 0 && parts[devIdx + 1]) return parts[devIdx + 1];
-  if (parts.length >= 2) return parts[parts.length - 2];
-  return parts[parts.length - 1] || String(sess?.label || '');
-}
-
 // Tile line 1: project slug under ~/dev, or "-" when cwd is outside dev (plain iTerm).
 export function sessionDisplayProject(sess) {
   const cwd = String(sess?.cwd || '').replace(/\/$/, '');
@@ -455,16 +402,7 @@ export function sessionRole(sess) {
   return String(sess?.label || '') || parts[parts.length - 1] || 'session';
 }
 
-// Tile title: "commander · coder" (or just "deck" when project === role).
-export function sessionTitle(sess) {
-  const project = sessionProject(sess);
-  const role = sessionRole(sess);
-  if (!project || project === role) return role || 'session';
-  return `${project} · ${role}`;
-}
-
 export const readClaudeSessionList = (stateDir) => readSessionList(stateDir, 'cc_sessions');
-export const readActiveClaudeSessionList = (stateDir) => readActiveSessionList(stateDir, 'cc_sessions');
 
 // Per-deck-key project/session map: deck_state/cc_keys.json = {"0_0":"coder",...}.
 // Lets you assign keys to sessions without the (flaky) Ulanzi config panel.
@@ -475,35 +413,6 @@ export async function readKeyMap(stateDir) {
   } catch {
     return {};
   }
-}
-
-export async function readClaudeSessions(stateDir) {
-  const out = { working: 0, waiting: 0, total: 0, waitingLabel: '', workingLabel: '' };
-  const dir = path.join(stateDir, 'cc_sessions');
-  let files;
-  try {
-    files = await fs.readdir(dir);
-  } catch {
-    return out; // no sessions yet
-  }
-  const now = Math.floor(Date.now() / 1000);
-  for (const f of files) {
-    if (!f.endsWith('.json')) continue;
-    const full = path.join(dir, f);
-    let obj;
-    try {
-      obj = JSON.parse(await fs.readFile(full, 'utf8'));
-    } catch {
-      continue; // partial/locked file — skip this cycle
-    }
-    const ts = Number(obj.ts) || 0;
-    const age = now - ts;
-    if (sessionShouldReap(obj, age)) { fs.unlink(full).catch(() => {}); continue; }
-    out.total++;
-    if (obj.state === 'working') { out.working++; out.workingLabel = obj.label || ''; }
-    else if (obj.state === 'waiting') { out.waiting++; out.waitingLabel = obj.label || ''; }
-  }
-  return out;
 }
 
 // --- GitHub API rate-limit usage ---------------------------------------------
