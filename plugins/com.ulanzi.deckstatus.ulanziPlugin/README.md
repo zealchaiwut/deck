@@ -1,21 +1,21 @@
 # Deck Status — UlanziDeck plugin
 
-Renders live status from your local `deck_state/` files onto Ulanzi D200 keys.
-The files are written by **other** scripts (e.g. `notify-coding.sh`, the
-`post-commit` Antigravity counter); this plugin only **reads** them — the one
-exception is resetting an `*_count.txt` counter to `0` when you tap its key.
+Renders live status onto Ulanzi D200 keys. **Dedicated actions** poll Commander,
+Claude Code, Cursor, GitHub, and git directly. The generic **Status Tile** action
+reads hand-written `deck_state/tile_<name>.json` or `.txt` files (tap resets
+`*_count.txt` counters).
 
 - **Type:** Node.js main service (`plugin/app.js`), Node v20, SDK protocol V2.1.2, Ulanzi Studio 3.0.11+
 - **Rendering:** pure-JS SVG → base64 data URL → `setBaseDataIcon` (no canvas/PNG dependency)
 - **Only dependency:** `ws`
 
-## File formats it reads (under STATE_DIR, default `~/dev/deck/scripts/deck_state`)
+## File formats (Status Tile, under STATE_DIR default `~/dev/deck/scripts/deck_state`)
 
-| Binding (`source`)         | Resolves to                          | Shown |
-|----------------------------|--------------------------------------|-------|
-| `coding_antigravity`       | `tile_coding_antigravity.json` then `.txt` | `value` + accent from `color` |
-| `antigravity_count.txt`    | `antigravity_count.txt` (integer)    | the number; tap resets to `0` |
-| `sub/foo.json`             | direct relative path                 | `value` + `color` |
+| Binding (`source`) | Resolves to | Shown |
+|---|---|---|
+| `test` | `tile_test.json` then `.txt` | `value` + accent from `color` |
+| `my_count.txt` | direct `*count.txt` path | integer; tap resets to `0` |
+| `sub/foo.json` | direct relative path | `value` + `color` |
 
 `tile_<name>.json` = `{"value","color","state","label"}`. `color` ∈
 `green|amber|red|blue|grey` (default grey). A `.txt` whose value is `0`/empty,
@@ -39,11 +39,6 @@ PI fields: `source`, `style`, `accent` (green/teal/blue/purple/amber/red/grey),
 File JSON drives the live data: `{"value","color","state","label","count"}` (any subset);
 `state` ∈ `running|done|error|idle` overrides color. `count` `"1/2"` feeds the ring/badge.
 Running `agent`/`timestat` tiles repaint every 700ms to animate the pulse.
-
-### Seed test files (already written to `deck_state/`)
-- `tile_demo_agent.json` = `{state:"running",accent:"green",count:"1/2",label:"antigravity"}` → green pulsing glyph + `1/2` badge.
-- `tile_demo_gauge.json` = `{value:"18",color:"amber",label:"disk"}` → amber gauge at 18% with bottom meter.
-- `antigravity_count.txt` = `3` → counter tile shows `3`, tap resets to `0`.
 
 ## Action: "Antigravity" (Keypad, all devices)
 
@@ -114,8 +109,6 @@ Logs also go to the plugin log file via `$UD.logMessage`.
    ```bash
    printf '%s' '{"value":"3","color":"red"}' > ~/dev/deck/scripts/deck_state/tile_test.json
    ```
-4. Bind another key to `antigravity_count.txt` — it shows the commit count and
-   tapping it resets to `0`.
 
 ## License
 

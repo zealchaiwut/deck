@@ -19,8 +19,7 @@ import {
   readCommanderApi, readCommanderKeyEntry, writeCommanderKey, writeCommanderProjectRepo,
   readCommanderProjects, readSprintProgress, readCommanderAgents, readGithubRate, readCursorAiActivity,
 } from './state-reader.js';
-import { render as renderStyle, renderMissing } from './render.js';
-import { renderTile, renderNeutral } from './renderer.js';
+import { render as renderStyle, renderMissing, renderTile, renderNeutral } from './render.js';
 import { appendFileSync, watch, existsSync } from 'fs';
 import { execFile } from 'child_process';
 import os from 'os';
@@ -429,7 +428,7 @@ async function renderInstance(inst) {
   ensureCursorWatch(inst);
 }
 
-// Watch the repo's reflog so a new commit (e.g. from the post-commit hook) forces
+// Watch the repo's reflog so a new commit forces an immediate hard refresh —
 // an immediate hard refresh — top priority, no waiting for the 30s poll.
 function ensureGitWatch(inst) {
   if (inst.type !== ACTION_ANTIGRAVITY || !inst.resolvedProject) return;
@@ -614,7 +613,7 @@ $UD.onDidReceiveSettings((msg) => {
 
 // Tap behavior:
 //   Antigravity   -> launch/focus the Antigravity app, then refresh the commit.
-//   Status Tile   -> reset an antigravity-counter file if bound to one, else refresh.
+//   Status Tile   -> reset a *count.txt file if bound to one, else refresh.
 $UD.onRun(async (msg) => {
   const inst = INSTANCES.get(msg.context) || ensureInstance(msg.context, settingsOf(msg));
   if (inst.type === ACTION_SPRINT) {

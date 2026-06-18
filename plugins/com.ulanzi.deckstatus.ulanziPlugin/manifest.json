@@ -1,7 +1,7 @@
 {
   "Author": "Chaiwut Chaianuchittrakul",
   "Name": "Deck Status",
-  "Description": "Render live status from local deck_state files (written by your scripts) onto deck keys. Reads tile_<name>.json / .txt and integer counter files; this plugin only reads, never writes (except resetting the antigravity counter on tap).",
+  "Description": "Render live status from local deck_state files onto deck keys. Dedicated actions poll Commander, Claude, Cursor, GitHub, and git directly; Status Tile reads tile_<name>.json/.txt (tap resets *count.txt counters).",
   "Icon": "resources/icon.png",
   "Version": "1.0.0",
   "Category": "Deck Status",

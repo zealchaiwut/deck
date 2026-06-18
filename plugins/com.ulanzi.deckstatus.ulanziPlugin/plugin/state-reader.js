@@ -520,8 +520,7 @@ export async function readProjectCommit(projectPath) {
 }
 
 // Turn a bound "source" into an absolute file path + kind.
-//   - "coding_antigravity"        -> tile_coding_antigravity.json|.txt   (tile name)
-//   - "antigravity_count.txt"     -> antigravity_count.txt               (direct path)
+//   - "my_tile"                   -> tile_my_tile.json|.txt               (tile name)
 //   - "sub/dir/foo.json"          -> sub/dir/foo.json                    (direct path)
 // Returns { jsonPath, txtPath } candidates to try in order (some may be null).
 function candidatePaths(stateDir, source) {

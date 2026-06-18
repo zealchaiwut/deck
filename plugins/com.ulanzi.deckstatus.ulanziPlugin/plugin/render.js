@@ -256,3 +256,69 @@ export function render(style, data) {
   const fn = RENDERERS[style] || renderAgent;
   return fn(data || {});
 }
+
+// --- Session tiles: accent bar + big value (Claude/Cursor session keys) ------
+const SESSION_BG = '#1f1f23';
+const SESSION_TEXT = '#ffffff';
+const SESSION_DIM = '#6b6b73';
+const SESSION_SHADOW = 'rgba(0,0,0,0.85)';
+const SESSION_ACCENT = {
+  green: '#3ecf6b',
+  amber: '#e3b341',
+  red: '#e3434c',
+  blue: '#4c9aff',
+  grey: '#4a4a52',
+};
+const SESSION_LABEL_Y = 46;
+const SESSION_VALUE_Y = 128;
+const SESSION_LABEL_SIZE = 24;
+
+function sessionAccent(color) {
+  if (typeof color === 'string' && color[0] === '#') return color;
+  return SESSION_ACCENT[color] || SESSION_ACCENT.grey;
+}
+
+function sessionValueFontSize(value) {
+  const len = String(value).length;
+  if (len <= 2) return 96;
+  if (len === 3) return 74;
+  if (len === 4) return 58;
+  if (len <= 6) return 44;
+  return 32;
+}
+
+function sessionText(t, x, y, size, weight, fill, anchor = 'middle') {
+  return `<text x="${x}" y="${y}" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="${size}" font-weight="${weight}" text-anchor="${anchor}" fill="${fill}">${esc(t)}</text>`;
+}
+
+function sessionTextShadow(t, x, y, size, weight, fill) {
+  return sessionText(t, x + 1.5, y + 1.5, size, weight, SESSION_SHADOW) + sessionText(t, x, y, size, weight, fill);
+}
+
+function sessionTruncate(s, max) {
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
+export function renderTile({ value, color, label }) {
+  const a = sessionAccent(color);
+  const fs = sessionValueFontSize(value);
+  const hasLabel = label && String(label).trim();
+  const body = [
+    `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="${SESSION_BG}"/>`,
+    `<rect x="0" y="0" width="${SIZE}" height="18" fill="${a}"/>`,
+    hasLabel ? sessionTextShadow(sessionTruncate(String(label), 18), SIZE / 2, SESSION_LABEL_Y, SESSION_LABEL_SIZE, '600', '#cfcfd6') : '',
+    sessionTextShadow(String(value), SIZE / 2, SESSION_VALUE_Y, fs, '700', SESSION_TEXT),
+  ].join('');
+  return toDataUrl(svgDoc(body));
+}
+
+export function renderNeutral({ value = '—', label = '' } = {}) {
+  const hasLabel = label && String(label).trim();
+  const body = [
+    `<rect x="0" y="0" width="${SIZE}" height="${SIZE}" fill="${SESSION_BG}"/>`,
+    `<rect x="0" y="0" width="${SIZE}" height="18" fill="${SESSION_ACCENT.grey}"/>`,
+    hasLabel ? sessionText(sessionTruncate(String(label), 18), SIZE / 2, SESSION_LABEL_Y, SESSION_LABEL_SIZE, '600', SESSION_DIM) : '',
+    sessionTextShadow(String(value), SIZE / 2, SESSION_VALUE_Y, sessionValueFontSize(value), '700', SESSION_DIM),
+  ].join('');
+  return toDataUrl(svgDoc(body));
+}
